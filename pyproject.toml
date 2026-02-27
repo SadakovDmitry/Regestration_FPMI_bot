@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hb-fpmi-bot"
+version = "0.1.0"
+description = "Telegram event registration bot (aiogram 3.x)"
+requires-python = ">=3.11"
+dependencies = [
+  "aiogram>=3.13.1,<4.0.0",
+  "SQLAlchemy>=2.0.34,<3.0.0",
+  "asyncpg>=0.29.0,<1.0.0",
+  "alembic>=1.13.2,<2.0.0",
+  "pydantic>=2.8.2,<3.0.0",
+  "pydantic-settings>=2.4.0,<3.0.0",
+  "python-dotenv>=1.0.1,<2.0.0",
+  "redis>=5.0.8,<6.0.0",
+  "celery>=5.4.0,<6.0.0",
+  "openpyxl>=3.1.5,<4.0.0",
+  "tzdata>=2024.1",
+  "greenlet>=3.0.3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.2,<9.0.0",
+  "pytest-asyncio>=0.24.0,<1.0.0",
+  "ruff>=0.6.2,<1.0.0",
+  "aiosqlite>=0.20.0,<1.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+

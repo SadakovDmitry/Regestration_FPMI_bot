@@ -1,0 +1,2 @@
+event_id,registration_id,team_name,role,last_name,first_name,middle_name,passport_series,passport_number,passport_issued_by,passport_division_code,passport_issue_date,birth_date,birth_place,registration_address
+12,2,Alpha,captain,Петров,Петр,,1234,567890,ОВД,770-001,2020-01-01,2000-01-01,Москва,"Москва, ул. Ленина, 1"

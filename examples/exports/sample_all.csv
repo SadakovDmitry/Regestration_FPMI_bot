@@ -1,0 +1,3 @@
+registration_id,event_id,status,team_name,team_size,role,last_name,first_name,middle_name,contact,group_name,is_not_mipt,passport_series,passport_number,passport_issued_by,passport_division_code,passport_issue_date,birth_date,birth_place,registration_address
+1,12,confirmed,,,solo,Иванов,Иван,Иванович,@ivanov,Б01-001,0,,,,,,,,
+2,12,registered,Alpha,4,captain,Петров,Петр,,@petrov,,1,1234,567890,ОВД,770-001,2020-01-01,2000-01-01,Москва,"Москва, ул. Ленина, 1"
