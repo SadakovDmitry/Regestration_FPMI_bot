@@ -1,14 +1,20 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from aiogram import Bot
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramRetryAfter,
+)
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.models import Event, Registration, User
 from app.models.enums import DeliveryKind, RegistrationStatus
 from app.repositories.deliveries import DeliveryRepository
@@ -20,31 +26,42 @@ class NotificationService:
     def __init__(self, session: AsyncSession, bot: Bot):
         self.session = session
         self.bot = bot
+        self.settings = get_settings()
         self.delivery_repo = DeliveryRepository(session)
 
     async def notify_new_event(self, event: Event) -> int:
-        users_result = await self.session.execute(select(User).where(User.is_reachable.is_(True)))
-        users = list(users_result.scalars().all())
-        sent = 0
+        return await self._broadcast_all_users(
+            event=event,
+            kind=DeliveryKind.new_event,
+            text=(
+                f"Новое мероприятие: {event.title}\n"
+                f"Когда: {event.start_at:%d.%m.%Y %H:%M}\n"
+                "Нажмите «Открыть мероприятие» для регистрации."
+            ),
+            markup=self._event_cta(event.id),
+        )
 
-        for user in users:
-            if await self.delivery_repo.exists(user.id, event.id, DeliveryKind.new_event):
-                continue
-            ok = await self._safe_send(
-                user,
-                text=(
-                    f"Новое мероприятие: {event.title}\n"
-                    f"Когда: {event.start_at:%d.%m.%Y %H:%M}\n"
-                    "Нажмите «Открыть мероприятие» для регистрации."
-                ),
-                markup=self._event_cta(event.id),
-            )
-            if not ok:
-                continue
-            await self._log_delivery(user.id, event.id, DeliveryKind.new_event)
-            sent += 1
+    async def notify_registration_started(self, event: Event) -> int:
+        return await self._broadcast_all_users(
+            event=event,
+            kind=DeliveryKind.registration_started,
+            text=(
+                f"Регистрация на «{event.title}» началась.\n"
+                f"Окно регистрации: до {event.registration_end_at:%d.%m.%Y %H:%M}."
+            ),
+            markup=self._event_cta(event.id),
+        )
 
-        return sent
+    async def notify_registration_ends_soon(self, event: Event) -> int:
+        return await self._broadcast_all_users(
+            event=event,
+            kind=DeliveryKind.registration_ends_soon,
+            text=(
+                f"До конца регистрации на «{event.title}» остался 1 час.\n"
+                "Если хотите участвовать, зарегистрируйтесь сейчас."
+            ),
+            markup=self._event_cta(event.id),
+        )
 
     async def notify_waitlist_invites(self, event_id: int) -> int:
         result = await self.session.execute(
@@ -203,15 +220,56 @@ class NotificationService:
 
         return sent
 
+    async def _broadcast_all_users(
+        self,
+        event: Event,
+        kind: DeliveryKind,
+        text: str,
+        markup: InlineKeyboardMarkup,
+    ) -> int:
+        users_result = await self.session.execute(select(User).where(User.is_reachable.is_(True)))
+        users = list(users_result.scalars().all())
+        sent = 0
+
+        for user in users:
+            if await self.delivery_repo.exists(user.id, event.id, kind):
+                continue
+
+            ok = await self._safe_send(user=user, text=text, markup=markup)
+            if ok:
+                await self._log_delivery(user_id=user.id, event_id=event.id, kind=kind)
+                sent += 1
+
+            await self._throttle_mass_send()
+
+        return sent
+
     async def _safe_send(
         self,
         user: User,
         text: str,
         markup: InlineKeyboardMarkup,
+        retry_on_flood: bool = True,
     ) -> bool:
         try:
             await self.bot.send_message(chat_id=user.tg_id, text=text, reply_markup=markup)
             return True
+        except TelegramRetryAfter as exc:
+            wait_seconds = max(float(exc.retry_after), 1.0)
+            logger.warning(
+                "Telegram flood control for tg_id=%s retry_after=%s",
+                user.tg_id,
+                wait_seconds,
+            )
+            if not retry_on_flood:
+                return False
+            await asyncio.sleep(wait_seconds)
+            return await self._safe_send(
+                user=user,
+                text=text,
+                markup=markup,
+                retry_on_flood=False,
+            )
         except (TelegramForbiddenError, TelegramBadRequest):
             user.is_reachable = False
             logger.info("User is unreachable tg_id=%s", user.tg_id)
@@ -219,6 +277,11 @@ class NotificationService:
         except Exception:
             logger.exception("Unexpected telegram send error tg_id=%s", user.tg_id)
             return False
+
+    async def _throttle_mass_send(self) -> None:
+        delay = max(float(self.settings.mass_send_delay_seconds), 0.0)
+        if delay > 0:
+            await asyncio.sleep(delay)
 
     async def _log_delivery(self, user_id: int, event_id: int | None, kind: DeliveryKind) -> None:
         async with self.session.begin_nested():
@@ -232,7 +295,12 @@ class NotificationService:
     def _event_cta(event_id: int) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="Открыть мероприятие", callback_data=f"event_open:{event_id}")],
+                [
+                    InlineKeyboardButton(
+                        text="Открыть мероприятие",
+                        callback_data=f"event_open:{event_id}",
+                    )
+                ],
                 [InlineKeyboardButton(text="Мои регистрации", callback_data="my_regs")],
             ]
         )

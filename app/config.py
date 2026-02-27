@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     channel_id: int | None = Field(default=None, alias="CHANNEL_ID")
     pd_consent_version: str = Field(default="v1", alias="PD_CONSENT_VERSION")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
+    mass_send_delay_seconds: float = Field(default=0.08, alias="MASS_SEND_DELAY_SECONDS")
 
     @field_validator("admin_ids", "super_admin_ids", mode="before")
     @classmethod

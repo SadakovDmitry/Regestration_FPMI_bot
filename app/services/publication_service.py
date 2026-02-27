@@ -84,9 +84,6 @@ class PublicationService:
 
     async def process_registration_window_posts(self, now: datetime | None = None) -> list[tuple[int, str]]:
         now = now or datetime.now(tz=UTC)
-        if not self.settings.channel_id:
-            return []
-
         result = await self.session.execute(
             select(Event.id).where(
                 Event.status == EventStatus.published,
@@ -110,35 +107,40 @@ class PublicationService:
             return []
 
         posted: list[str] = []
+        notifier = NotificationService(self.session, self.bot)
 
         if (
             event.registration_open_notified_at is None
             and event.registration_start_at <= now <= event.registration_end_at
         ):
-            message = await self.bot.send_message(
-                chat_id=self.settings.channel_id,
-                text=(
-                    f"🔔 Регистрация на мероприятие «{event.title}» началась!\n"
-                    f"Успейте до {event.registration_end_at:%d.%m.%Y %H:%M}."
-                ),
-            )
+            if self.settings.channel_id:
+                message = await self.bot.send_message(
+                    chat_id=self.settings.channel_id,
+                    text=(
+                        f"🔔 Регистрация на мероприятие «{event.title}» началась!\n"
+                        f"Успейте до {event.registration_end_at:%d.%m.%Y %H:%M}."
+                    ),
+                )
+                event.registration_open_post_message_id = message.message_id
             event.registration_open_notified_at = now
-            event.registration_open_post_message_id = message.message_id
+            await notifier.notify_registration_started(event)
             posted.append("registration_open")
 
         if (
             event.registration_close_soon_notified_at is None
             and event.registration_end_at - timedelta(hours=1) <= now < event.registration_end_at
         ):
-            message = await self.bot.send_message(
-                chat_id=self.settings.channel_id,
-                text=(
-                    f"⏳ До завершения регистрации на «{event.title}» остался 1 час.\n"
-                    "Если еще не зарегистрировались — сейчас самое время."
-                ),
-            )
+            if self.settings.channel_id:
+                message = await self.bot.send_message(
+                    chat_id=self.settings.channel_id,
+                    text=(
+                        f"⏳ До завершения регистрации на «{event.title}» остался 1 час.\n"
+                        "Если еще не зарегистрировались — сейчас самое время."
+                    ),
+                )
+                event.registration_close_soon_post_message_id = message.message_id
             event.registration_close_soon_notified_at = now
-            event.registration_close_soon_post_message_id = message.message_id
+            await notifier.notify_registration_ends_soon(event)
             posted.append("registration_close_soon")
 
         return posted

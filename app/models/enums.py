@@ -30,6 +30,8 @@ class PersonRole(str, Enum):
 
 class DeliveryKind(str, Enum):
     new_event = "new_event"
+    registration_started = "registration_started"
+    registration_ends_soon = "registration_ends_soon"
     ping_4d = "ping_4d"
     confirmation_24h = "confirmation_24h"
     ping_2h = "ping_2h"
