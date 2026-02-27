@@ -11,7 +11,7 @@ from app.db import AsyncSessionLocal
 from app.handlers.states import ProfileStates, RegistrationStates
 from app.keyboards.common import main_menu_kb
 from app.keyboards.events import event_card_kb, events_list_kb, group_choice_kb, pd_consent_kb, yes_no_kb
-from app.models import Event, RegistrationStatus
+from app.models import RegistrationStatus
 from app.repositories.events import EventRepository
 from app.repositories.registrations import RegistrationRepository
 from app.repositories.users import UserRepository
@@ -24,13 +24,17 @@ from app.utils.text import render_event_card
 user_router = Router(name="user")
 
 HELP_TEXT = (
-    "Бот регистрации на мероприятия.\n"
-    "Кнопки: мероприятия, мои регистрации, лист ожидания, профиль.\n"
-    "Отмена регистрации доступна в любое время."
+    "🤝 Я помогу зарегистрироваться на мероприятия ФПМИ.\n\n"
+    "Что умею:\n"
+    "• показываю актуальные мероприятия\n"
+    "• регистрирую и снимаю с регистрации\n"
+    "• веду лист ожидания\n"
+    "• храню профиль для автозаполнения\n\n"
+    "💡 Важно: отменить регистрацию можно в любое время."
 )
 
 PD_CONSENT_TEXT = (
-    "Нажимая «Согласен(на)», вы даёте согласие организаторам на обработку "
+    "🔐 Нажимая «Согласен(на)», вы даёте согласие организаторам на обработку "
     "ваших персональных данных, включая паспортные данные, исключительно для "
     "оформления пропуска на территорию кампуса и организации участия в мероприятии. "
     "Доступ к данным имеют только администраторы."
@@ -58,7 +62,7 @@ async def cmd_start(message: Message) -> None:
         await session.commit()
 
     await message.answer(
-        "Вы в системе регистрации. Выберите действие в меню.",
+        "👋 Привет! Рад видеть тебя в системе регистрации ФПМИ.\nВыбери нужный раздел в меню ниже.",
         reply_markup=main_menu_kb(),
     )
 
@@ -74,15 +78,15 @@ async def list_events(message: Message) -> None:
         events = await EventRepository(session).list_published(datetime.now(tz=UTC))
 
     if not events:
-        await message.answer("Пока нет опубликованных мероприятий.")
+        await message.answer("📭 Пока нет активных мероприятий. Как только появятся — я сразу покажу.")
         return
 
-    await message.answer("Доступные мероприятия:", reply_markup=events_list_kb(events))
+    await message.answer("📌 Вот что доступно сейчас:", reply_markup=events_list_kb(events))
 
 
 @user_router.callback_query(F.data == "events_back")
 async def events_back(callback: CallbackQuery) -> None:
-    await callback.message.answer("Откройте список мероприятий кнопкой «📅 Мероприятия».")
+    await callback.message.answer("↩️ Нажми «📅 Мероприятия», чтобы снова открыть список.")
     await callback.answer()
 
 
@@ -94,7 +98,7 @@ async def open_event(callback: CallbackQuery) -> None:
         event = await EventRepository(session).get(event_id)
         user = await UserRepository(session).get_by_tg_id(callback.from_user.id)
         if not event or not user:
-            await callback.answer("Событие не найдено", show_alert=True)
+            await callback.answer("⚠️ Событие не найдено", show_alert=True)
             return
 
         existing = await RegistrationRepository(session).active_registration_for_user_event(
@@ -130,16 +134,16 @@ async def my_regs(update: Message | CallbackQuery) -> None:
     async with AsyncSessionLocal() as session:
         user = await UserRepository(session).get_by_tg_id(tg_id)
         if not user:
-            await send("Используйте /start")
+            await send("ℹ️ Сначала отправь /start, чтобы активировать профиль.")
             return
 
         regs = await RegistrationRepository(session).list_by_user(user.id)
 
     if not regs:
-        await send("У вас пока нет регистраций.")
+        await send("🧾 Пока нет регистраций. Загляни в «📅 Мероприятия».")
         return
 
-    lines = ["Ваши регистрации:"]
+    lines = ["🗂 Твои регистрации:"]
     for reg in regs:
         lines.append(
             f"#{reg.id} | {reg.event.title} | {reg.status.value}"
@@ -156,17 +160,17 @@ async def my_waitlist(message: Message) -> None:
     async with AsyncSessionLocal() as session:
         user = await UserRepository(session).get_by_tg_id(message.from_user.id)
         if not user:
-            await message.answer("Используйте /start")
+            await message.answer("ℹ️ Сначала отправь /start, чтобы активировать профиль.")
             return
 
         regs = await RegistrationRepository(session).list_by_user(user.id)
 
     waitlist_regs = [r for r in regs if r.status == RegistrationStatus.waitlist]
     if not waitlist_regs:
-        await message.answer("Вы не стоите в листе ожидания.")
+        await message.answer("🕒 Сейчас ты не в листе ожидания.")
         return
 
-    lines = ["Ваш лист ожидания:"]
+    lines = ["🕒 Лист ожидания:"]
     for reg in waitlist_regs:
         lines.append(f"#{reg.id} | {reg.event.title}")
     await message.answer("\n".join(lines))
@@ -178,20 +182,20 @@ async def cancel_event(callback: CallbackQuery) -> None:
     async with AsyncSessionLocal() as session:
         user = await UserRepository(session).get_by_tg_id(callback.from_user.id)
         if not user:
-            await callback.answer("Используйте /start", show_alert=True)
+            await callback.answer("ℹ️ Сначала отправь /start", show_alert=True)
             return
 
         reg_repo = RegistrationRepository(session)
         reg = await reg_repo.active_registration_for_user_event(user.id, event_id)
         if not reg:
-            await callback.answer("Активная регистрация не найдена", show_alert=True)
+            await callback.answer("⚠️ Активная регистрация не найдена", show_alert=True)
             return
 
         service = RegistrationService(session)
         await service.cancel_registration(user.id, reg.id)
         await session.commit()
 
-    await callback.message.answer("Регистрация отменена.")
+    await callback.message.answer("✅ Готово, регистрация отменена.")
     await callback.answer()
 
 
@@ -203,12 +207,12 @@ async def register_event_start(callback: CallbackQuery, state: FSMContext) -> No
         event = await EventRepository(session).get(event_id)
         user = await UserRepository(session).get_by_tg_id(callback.from_user.id)
         if not event or not user:
-            await callback.answer("Событие не найдено", show_alert=True)
+            await callback.answer("⚠️ Событие не найдено", show_alert=True)
             return
 
         existing = await RegistrationRepository(session).active_registration_for_user_event(user.id, event_id)
         if existing:
-            await callback.answer("У вас уже есть активная регистрация", show_alert=True)
+            await callback.answer("ℹ️ У тебя уже есть активная регистрация", show_alert=True)
             return
 
         profile = {
@@ -232,7 +236,7 @@ async def register_event_start(callback: CallbackQuery, state: FSMContext) -> No
     )
     await state.set_state(RegistrationStates.last_name)
     await callback.message.answer(
-        "Фамилия капитана/участника" + _fmt_profile_hint(profile.get("last_name")) + ":"
+        "📝 Фамилия капитана/участника" + _fmt_profile_hint(profile.get("last_name")) + ":"
     )
     await callback.answer()
 
@@ -244,13 +248,13 @@ async def reg_last_name(message: Message, state: FSMContext) -> None:
     if value == "-":
         value = data["profile"].get("last_name")
     if not value:
-        await message.answer("Фамилия обязательна.")
+        await message.answer("⚠️ Фамилия обязательна.")
         return
     captain = data["captain"]
     captain["last_name"] = value
     await state.update_data(captain=captain)
     await state.set_state(RegistrationStates.first_name)
-    await message.answer("Имя" + _fmt_profile_hint(data["profile"].get("first_name")) + ":")
+    await message.answer("🙂 Имя" + _fmt_profile_hint(data["profile"].get("first_name")) + ":")
 
 
 @user_router.message(RegistrationStates.first_name)
@@ -260,7 +264,7 @@ async def reg_first_name(message: Message, state: FSMContext) -> None:
     if value == "-":
         value = data["profile"].get("first_name")
     if not value:
-        await message.answer("Имя обязательно.")
+        await message.answer("⚠️ Имя обязательно.")
         return
     captain = data["captain"]
     captain["first_name"] = value
@@ -285,7 +289,7 @@ async def reg_middle_name(message: Message, state: FSMContext) -> None:
     await state.set_state(RegistrationStates.contact)
     default_contact = data["profile"].get("contact")
     await message.answer(
-        "Контакт (@username или телефон)" + _fmt_profile_hint(default_contact) + ":"
+        "📞 Контакт (@username или телефон)" + _fmt_profile_hint(default_contact) + ":"
     )
 
 
@@ -298,7 +302,7 @@ async def reg_contact(message: Message, state: FSMContext) -> None:
     if not value and message.from_user.username:
         value = f"@{message.from_user.username}"
     if not value:
-        await message.answer("Контакт обязателен.")
+        await message.answer("⚠️ Контакт обязателен.")
         return
     captain = data["captain"]
     captain["contact"] = value
@@ -306,7 +310,7 @@ async def reg_contact(message: Message, state: FSMContext) -> None:
 
     await state.set_state(RegistrationStates.group_or_not_mipt)
     await message.answer(
-        "Укажите, участник с Физтеха или нет:",
+        "🏫 Укажите, участник с Физтеха или нет:",
         reply_markup=group_choice_kb(),
     )
 
@@ -340,7 +344,7 @@ async def reg_group_name(message: Message, state: FSMContext) -> None:
     if value == "-":
         value = data["profile"].get("group_name")
     if not value:
-        await message.answer("Группа обязательна для участников с Физтеха.")
+        await message.answer("⚠️ Группа обязательна для участников с Физтеха.")
         return
 
     captain = data["captain"]
@@ -360,13 +364,13 @@ async def reg_pd_consent(callback: CallbackQuery, state: FSMContext) -> None:
     if pending == "captain_passport":
         await state.update_data(passport_target="captain", passport_data={})
         await state.set_state(RegistrationStates.passport_series)
-        await callback.message.answer("Паспорт: серия")
+        await callback.message.answer("🛂 Паспорт: серия")
     elif pending == "team_members":
         await state.update_data(current_member_idx=0, current_member={})
         await state.set_state(RegistrationStates.member_last_name)
-        await callback.message.answer("Участник 1 (не с Физтеха): фамилия")
+        await callback.message.answer("👤 Участник 1 (не с Физтеха): фамилия")
     else:
-        await callback.message.answer("Согласие сохранено.")
+        await callback.message.answer("✅ Согласие сохранено.")
 
     await callback.answer()
 
@@ -375,7 +379,7 @@ async def _after_captain_ready(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     if data["event_type"] == "team":
         await state.set_state(RegistrationStates.team_name)
-        await message.answer("Название команды:")
+        await message.answer("🏷 Название команды:")
         return
 
     await _finalize_registration(message, state)
@@ -385,7 +389,7 @@ async def _after_captain_ready(message: Message, state: FSMContext) -> None:
 async def reg_team_name(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     if not value:
-        await message.answer("Название команды обязательно.")
+        await message.answer("⚠️ Название команды обязательно.")
         return
     await state.update_data(team_name=value)
     await state.set_state(RegistrationStates.team_size)
@@ -393,7 +397,7 @@ async def reg_team_name(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     team_min = data.get("team_min_size")
     team_max = data.get("team_max_size")
-    await message.answer(f"Размер команды ({team_min}-{team_max}):")
+    await message.answer(f"👥 Размер команды ({team_min}-{team_max}):")
 
 
 @user_router.message(RegistrationStates.team_size)
@@ -402,19 +406,19 @@ async def reg_team_size(message: Message, state: FSMContext) -> None:
     try:
         size = int(message.text.strip())
     except ValueError:
-        await message.answer("Введите целое число.")
+        await message.answer("🔢 Введите целое число.")
         return
 
     team_min = data.get("team_min_size")
     team_max = data.get("team_max_size")
     if (team_min and size < team_min) or (team_max and size > team_max):
-        await message.answer(f"Размер команды должен быть в диапазоне {team_min}-{team_max}.")
+        await message.answer(f"⚠️ Размер команды должен быть в диапазоне {team_min}-{team_max}.")
         return
 
     await state.update_data(team_size=size)
     await state.set_state(RegistrationStates.team_has_not_mipt)
     await message.answer(
-        "Есть ли участники не с Физтеха?",
+        "❓ Есть ли участники не с Физтеха?",
         reply_markup=yes_no_kb("team_not_mipt_yes", "team_not_mipt_no"),
     )
 
@@ -425,7 +429,7 @@ async def reg_team_not_mipt(callback: CallbackQuery, state: FSMContext) -> None:
         await _finalize_registration(callback.message, state)
     else:
         await state.set_state(RegistrationStates.not_mipt_count)
-        await callback.message.answer("Сколько участников не с Физтеха (целое):")
+        await callback.message.answer("🔢 Сколько участников не с Физтеха? (целое число)")
     await callback.answer()
 
 
@@ -435,12 +439,12 @@ async def reg_not_mipt_count(message: Message, state: FSMContext) -> None:
     try:
         count = int(message.text.strip())
     except ValueError:
-        await message.answer("Введите целое число.")
+        await message.answer("🔢 Введите целое число.")
         return
 
     team_size = int(data.get("team_size") or 0)
     if count <= 0 or count > team_size:
-        await message.answer("Количество должно быть > 0 и не больше размера команды.")
+        await message.answer("⚠️ Количество должно быть > 0 и не больше размера команды.")
         return
 
     await state.update_data(member_target_count=count)
@@ -452,35 +456,35 @@ async def reg_not_mipt_count(message: Message, state: FSMContext) -> None:
 
     await state.update_data(current_member_idx=0, current_member={})
     await state.set_state(RegistrationStates.member_last_name)
-    await message.answer("Участник 1 (не с Физтеха): фамилия")
+    await message.answer("👤 Участник 1 (не с Физтеха): фамилия")
 
 
 @user_router.message(RegistrationStates.member_last_name)
 async def member_last_name(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     if not value:
-        await message.answer("Фамилия обязательна.")
+        await message.answer("⚠️ Фамилия обязательна.")
         return
     data = await state.get_data()
     member = data.get("current_member", {})
     member["last_name"] = value
     await state.update_data(current_member=member)
     await state.set_state(RegistrationStates.member_first_name)
-    await message.answer("Имя:")
+    await message.answer("🙂 Имя:")
 
 
 @user_router.message(RegistrationStates.member_first_name)
 async def member_first_name(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     if not value:
-        await message.answer("Имя обязательно.")
+        await message.answer("⚠️ Имя обязательно.")
         return
     data = await state.get_data()
     member = data.get("current_member", {})
     member["first_name"] = value
     await state.update_data(current_member=member)
     await state.set_state(RegistrationStates.member_middle_name)
-    await message.answer("Отчество (опционально, '-' если нет):")
+    await message.answer("📝 Отчество (опционально, '-' если нет):")
 
 
 @user_router.message(RegistrationStates.member_middle_name)
@@ -491,63 +495,63 @@ async def member_middle_name(message: Message, state: FSMContext) -> None:
     member["middle_name"] = None if value == "-" else value
     await state.update_data(current_member=member, passport_target="member", passport_data={})
     await state.set_state(RegistrationStates.passport_series)
-    await message.answer("Паспорт участника: серия")
+    await message.answer("🛂 Паспорт участника: серия")
 
 
 @user_router.message(RegistrationStates.passport_series)
 async def passport_series(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     if not value:
-        await message.answer("Серия обязательна.")
+        await message.answer("⚠️ Серия обязательна.")
         return
     data = await state.get_data()
     passport = data.get("passport_data", {})
     passport["series"] = value
     await state.update_data(passport_data=passport)
     await state.set_state(RegistrationStates.passport_number)
-    await message.answer("Номер паспорта:")
+    await message.answer("🛂 Номер паспорта:")
 
 
 @user_router.message(RegistrationStates.passport_number)
 async def passport_number(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     if not value:
-        await message.answer("Номер обязателен.")
+        await message.answer("⚠️ Номер обязателен.")
         return
     data = await state.get_data()
     passport = data.get("passport_data", {})
     passport["number"] = value
     await state.update_data(passport_data=passport)
     await state.set_state(RegistrationStates.passport_issued_by)
-    await message.answer("Кем выдан:")
+    await message.answer("🏢 Кем выдан:")
 
 
 @user_router.message(RegistrationStates.passport_issued_by)
 async def passport_issued_by(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     if not value:
-        await message.answer("Поле обязательное.")
+        await message.answer("⚠️ Поле обязательное.")
         return
     data = await state.get_data()
     passport = data.get("passport_data", {})
     passport["issued_by"] = value
     await state.update_data(passport_data=passport)
     await state.set_state(RegistrationStates.passport_division_code)
-    await message.answer("Код подразделения:")
+    await message.answer("🔐 Код подразделения:")
 
 
 @user_router.message(RegistrationStates.passport_division_code)
 async def passport_division_code(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     if not value:
-        await message.answer("Поле обязательное.")
+        await message.answer("⚠️ Поле обязательное.")
         return
     data = await state.get_data()
     passport = data.get("passport_data", {})
     passport["division_code"] = value
     await state.update_data(passport_data=passport)
     await state.set_state(RegistrationStates.passport_issue_date)
-    await message.answer("Дата выдачи (YYYY-MM-DD):")
+    await message.answer("📅 Дата выдачи (YYYY-MM-DD):")
 
 
 @user_router.message(RegistrationStates.passport_issue_date)
@@ -556,7 +560,7 @@ async def passport_issue_date(message: Message, state: FSMContext) -> None:
     try:
         parsed = _parse_date(value)
     except ValueError:
-        await message.answer("Ожидается формат YYYY-MM-DD.")
+        await message.answer("⚠️ Ожидается формат YYYY-MM-DD.")
         return
 
     data = await state.get_data()
@@ -564,7 +568,7 @@ async def passport_issue_date(message: Message, state: FSMContext) -> None:
     passport["issue_date"] = parsed.isoformat()
     await state.update_data(passport_data=passport)
     await state.set_state(RegistrationStates.birth_date)
-    await message.answer("Дата рождения (YYYY-MM-DD):")
+    await message.answer("🎂 Дата рождения (YYYY-MM-DD):")
 
 
 @user_router.message(RegistrationStates.birth_date)
@@ -573,7 +577,7 @@ async def birth_date_step(message: Message, state: FSMContext) -> None:
     try:
         parsed = _parse_date(value)
     except ValueError:
-        await message.answer("Ожидается формат YYYY-MM-DD.")
+        await message.answer("⚠️ Ожидается формат YYYY-MM-DD.")
         return
 
     data = await state.get_data()
@@ -581,14 +585,14 @@ async def birth_date_step(message: Message, state: FSMContext) -> None:
     passport["birth_date"] = parsed.isoformat()
     await state.update_data(passport_data=passport)
     await state.set_state(RegistrationStates.birth_place)
-    await message.answer("Место рождения:")
+    await message.answer("🌍 Место рождения:")
 
 
 @user_router.message(RegistrationStates.birth_place)
 async def birth_place_step(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     if not value:
-        await message.answer("Поле обязательное.")
+        await message.answer("⚠️ Поле обязательное.")
         return
 
     data = await state.get_data()
@@ -596,14 +600,14 @@ async def birth_place_step(message: Message, state: FSMContext) -> None:
     passport["birth_place"] = value
     await state.update_data(passport_data=passport)
     await state.set_state(RegistrationStates.registration_address)
-    await message.answer("Адрес регистрации:")
+    await message.answer("🏠 Адрес регистрации:")
 
 
 @user_router.message(RegistrationStates.registration_address)
 async def registration_address_step(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     if not value:
-        await message.answer("Поле обязательное.")
+        await message.answer("⚠️ Поле обязательное.")
         return
 
     data = await state.get_data()
@@ -643,7 +647,7 @@ async def registration_address_step(message: Message, state: FSMContext) -> None
         await _finalize_registration(message, state)
         return
 
-    await message.answer("Внутренняя ошибка сценария регистрации. Начните заново.")
+    await message.answer("⚠️ Внутренняя ошибка сценария регистрации. Начните заново.")
     await state.clear()
 
 
@@ -711,7 +715,7 @@ async def _finalize_registration(message: Message, state: FSMContext) -> None:
     async with AsyncSessionLocal() as session:
         user = await UserRepository(session).get_by_tg_id(message.from_user.id)
         if not user:
-            await message.answer("Используйте /start")
+            await message.answer("ℹ️ Сначала отправь /start, чтобы активировать профиль.")
             return
 
         service = RegistrationService(session)
@@ -728,9 +732,12 @@ async def _finalize_registration(message: Message, state: FSMContext) -> None:
         await session.commit()
 
     if reg.status == RegistrationStatus.waitlist:
-        await message.answer("Лимит заполнен. Вы добавлены в лист ожидания.")
+        await message.answer(
+            "Все места уже заняты, но ты в листе ожидания.\n"
+            "Если освободится место, сразу напишу."
+        )
     else:
-        await message.answer("Регистрация успешно создана.")
+        await message.answer("✅ Готово! Регистрация успешно создана.")
 
     await state.clear()
 
@@ -755,7 +762,7 @@ async def waitlist_response(callback: CallbackQuery) -> None:
             await callback.answer(str(exc), show_alert=True)
             return
 
-    await callback.message.answer("Ответ сохранён.")
+    await callback.message.answer("✅ Ответ сохранён. Спасибо!")
     await callback.answer()
 
 
@@ -774,7 +781,7 @@ async def confirmation_response(callback: CallbackQuery) -> None:
             await callback.answer(str(exc), show_alert=True)
             return
 
-    await callback.message.answer("Ответ на подтверждение сохранён.")
+    await callback.message.answer("✅ Ответ на подтверждение сохранён.")
     await callback.answer()
 
 
@@ -783,11 +790,11 @@ async def profile_view(message: Message) -> None:
     async with AsyncSessionLocal() as session:
         user = await UserRepository(session).get_by_tg_id(message.from_user.id)
         if not user:
-            await message.answer("Используйте /start")
+            await message.answer("ℹ️ Сначала отправь /start, чтобы активировать профиль.")
             return
 
     text = (
-        "Профиль:\n"
+        "👤 Твой профиль:\n"
         f"Фамилия: {user.last_name or '-'}\n"
         f"Имя: {user.first_name or '-'}\n"
         f"Отчество: {user.middle_name or '-'}\n"
@@ -805,7 +812,7 @@ async def profile_edit_start(callback: CallbackQuery, state: FSMContext) -> None
     async with AsyncSessionLocal() as session:
         user = await UserRepository(session).get_by_tg_id(callback.from_user.id)
     if not user:
-        await callback.answer("Используйте /start", show_alert=True)
+        await callback.answer("ℹ️ Сначала отправь /start", show_alert=True)
         return
 
     await state.clear()
@@ -819,7 +826,7 @@ async def profile_edit_start(callback: CallbackQuery, state: FSMContext) -> None
         }
     )
     await state.set_state(ProfileStates.last_name)
-    await callback.message.answer("Фамилия" + _fmt_profile_hint(user.last_name) + ":")
+    await callback.message.answer("📝 Фамилия" + _fmt_profile_hint(user.last_name) + ":")
     await callback.answer()
 
 
@@ -828,13 +835,13 @@ async def profile_clear(callback: CallbackQuery) -> None:
     async with AsyncSessionLocal() as session:
         user = await UserRepository(session).get_by_tg_id(callback.from_user.id)
         if not user:
-            await callback.answer("Используйте /start", show_alert=True)
+            await callback.answer("ℹ️ Сначала отправь /start", show_alert=True)
             return
 
         await ProfileService(session).clear(user.id)
         await session.commit()
 
-    await callback.message.answer("Профиль очищен.")
+    await callback.message.answer("🧹 Профиль очищен.")
     await callback.answer()
 
 
@@ -845,14 +852,14 @@ async def profile_last_name(message: Message, state: FSMContext) -> None:
     if value == "-":
         value = data["profile"].get("last_name")
     if not value:
-        await message.answer("Фамилия обязательна.")
+        await message.answer("⚠️ Фамилия обязательна.")
         return
 
     profile = data["profile"]
     profile["last_name"] = value
     await state.update_data(profile=profile)
     await state.set_state(ProfileStates.first_name)
-    await message.answer("Имя" + _fmt_profile_hint(profile.get("first_name")) + ":")
+    await message.answer("🙂 Имя" + _fmt_profile_hint(profile.get("first_name")) + ":")
 
 
 @user_router.message(ProfileStates.first_name)
@@ -862,14 +869,14 @@ async def profile_first_name(message: Message, state: FSMContext) -> None:
     if value == "-":
         value = data["profile"].get("first_name")
     if not value:
-        await message.answer("Имя обязательно.")
+        await message.answer("⚠️ Имя обязательно.")
         return
 
     profile = data["profile"]
     profile["first_name"] = value
     await state.update_data(profile=profile)
     await state.set_state(ProfileStates.middle_name)
-    await message.answer("Отчество (опционально, '-' чтобы пропустить):")
+    await message.answer("📝 Отчество (опционально, '-' чтобы пропустить):")
 
 
 @user_router.message(ProfileStates.middle_name)
@@ -880,7 +887,7 @@ async def profile_middle_name(message: Message, state: FSMContext) -> None:
     profile["middle_name"] = None if value == "-" else value
     await state.update_data(profile=profile)
     await state.set_state(ProfileStates.contact)
-    await message.answer("Контакт:")
+    await message.answer("📞 Контакт:")
 
 
 @user_router.message(ProfileStates.contact)
@@ -888,14 +895,14 @@ async def profile_contact(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     value = message.text.strip()
     if not value:
-        await message.answer("Контакт обязателен.")
+        await message.answer("⚠️ Контакт обязателен.")
         return
 
     profile = data["profile"]
     profile["contact"] = value
     await state.update_data(profile=profile)
     await state.set_state(ProfileStates.group_name)
-    await message.answer("Группа:")
+    await message.answer("🏫 Группа:")
 
 
 @user_router.message(ProfileStates.group_name)
@@ -903,7 +910,7 @@ async def profile_group_name(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     value = message.text.strip()
     if not value:
-        await message.answer("Группа обязательна.")
+        await message.answer("⚠️ Группа обязательна.")
         return
 
     profile = data["profile"]
@@ -912,7 +919,7 @@ async def profile_group_name(message: Message, state: FSMContext) -> None:
     async with AsyncSessionLocal() as session:
         user = await UserRepository(session).get_by_tg_id(message.from_user.id)
         if not user:
-            await message.answer("Используйте /start")
+            await message.answer("ℹ️ Сначала отправь /start, чтобы активировать профиль.")
             return
 
         await ProfileService(session).update(
@@ -930,4 +937,4 @@ async def profile_group_name(message: Message, state: FSMContext) -> None:
         await session.commit()
 
     await state.clear()
-    await message.answer("Профиль обновлён.")
+    await message.answer("✅ Профиль обновлён. В следующий раз часть данных подставлю автоматически.")
