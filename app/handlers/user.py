@@ -51,6 +51,79 @@ def _fmt_profile_hint(value: str | None) -> str:
     return ""
 
 
+async def _continue_captain_flow(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    profile = data.get("profile", {})
+    captain = data.get("captain", {})
+
+    if not captain.get("last_name"):
+        saved = profile.get("last_name")
+        if saved:
+            captain["last_name"] = saved
+            await state.update_data(captain=captain)
+        else:
+            await state.set_state(RegistrationStates.last_name)
+            await message.answer("📝 Фамилия капитана/участника:")
+            return
+
+    if not captain.get("first_name"):
+        saved = profile.get("first_name")
+        if saved:
+            captain["first_name"] = saved
+            await state.update_data(captain=captain)
+        else:
+            await state.set_state(RegistrationStates.first_name)
+            await message.answer("🙂 Имя:")
+            return
+
+    if "middle_name" not in captain:
+        saved = profile.get("middle_name")
+        if saved:
+            captain["middle_name"] = saved
+            await state.update_data(captain=captain)
+        else:
+            await state.set_state(RegistrationStates.middle_name)
+            await message.answer("📝 Отчество (опционально, '-' если нет):")
+            return
+
+    if not captain.get("contact"):
+        saved_contact = profile.get("contact") or (f"@{message.from_user.username}" if message.from_user.username else None)
+        if saved_contact:
+            captain["contact"] = saved_contact
+            await state.update_data(captain=captain)
+        else:
+            await state.set_state(RegistrationStates.contact)
+            await message.answer("📞 Контакт (@username или телефон):")
+            return
+
+    if captain.get("is_not_mipt") is True:
+        captain["group_name"] = None
+        await state.update_data(captain=captain, pending_after_consent="captain_passport")
+        await state.set_state(RegistrationStates.pd_consent)
+        await message.answer(PD_CONSENT_TEXT, reply_markup=pd_consent_kb())
+        return
+
+    if captain.get("group_name"):
+        captain["is_not_mipt"] = False
+        await state.update_data(captain=captain)
+        await _after_captain_ready(message, state)
+        return
+
+    saved_group = profile.get("group_name")
+    if saved_group:
+        captain["group_name"] = saved_group
+        captain["is_not_mipt"] = False
+        await state.update_data(captain=captain)
+        await _after_captain_ready(message, state)
+        return
+
+    await state.set_state(RegistrationStates.group_or_not_mipt)
+    await message.answer(
+        "🏫 Укажите, участник с Физтеха или нет:",
+        reply_markup=group_choice_kb(),
+    )
+
+
 @user_router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     async with AsyncSessionLocal() as session:
@@ -118,7 +191,7 @@ async def open_event(callback: CallbackQuery) -> None:
     elif now < event.registration_start_at:
         reg_note = (
             "⏳ Регистрация еще не открыта.\n"
-            f"Старт: {format_dt_tz(event.registration_start_at)} (Europe/Moscow)."
+            f"Старт: {format_dt_tz(event.registration_start_at)}."
         )
     elif now > event.registration_end_at:
         reg_note = "🚫 Регистрация уже закрыта."
@@ -154,17 +227,17 @@ async def my_regs(update: Message | CallbackQuery) -> None:
         await send("🧾 Пока нет регистраций. Загляни в «📅 Мероприятия».")
         return
 
-    lines = ["🗂 Твои регистрации:"]
+    event_blocks = []
     for reg in regs:
-        line = (
+        block = (
             f"#{reg.id} | {reg.event.title} | {reg.status.value}\n"
-            f"📍 {reg.event.location}\n"
-            f"🗓 {format_dt_tz(reg.event.start_at)} (Europe/Moscow)"
+            f"\t📍 {reg.event.location}\n"
+            f"\t🗓 {format_dt_tz(reg.event.start_at)}"
         )
         if reg.team_name:
-            line += f"\n👥 команда: {reg.team_name}"
-        lines.append(line)
-    await send("\n".join(lines))
+            block += f"\n\t👥 команда: {reg.team_name}"
+        event_blocks.append(block)
+    await send("🗂 Твои регистрации:\n\n" + "\n\n".join(event_blocks))
 
     if isinstance(update, CallbackQuery):
         await update.answer()
@@ -249,10 +322,7 @@ async def register_event_start(callback: CallbackQuery, state: FSMContext) -> No
         not_mipt_members=[],
         pd_consent=False,
     )
-    await state.set_state(RegistrationStates.last_name)
-    await callback.message.answer(
-        "📝 Фамилия капитана/участника" + _fmt_profile_hint(profile.get("last_name")) + ":"
-    )
+    await _continue_captain_flow(callback.message, state)
     await callback.answer()
 
 
@@ -260,60 +330,42 @@ async def register_event_start(callback: CallbackQuery, state: FSMContext) -> No
 async def reg_last_name(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     value = message.text.strip()
-    if value == "-":
-        value = data["profile"].get("last_name")
     if not value:
         await message.answer("⚠️ Фамилия обязательна.")
         return
     captain = data["captain"]
     captain["last_name"] = value
     await state.update_data(captain=captain)
-    await state.set_state(RegistrationStates.first_name)
-    await message.answer("🙂 Имя" + _fmt_profile_hint(data["profile"].get("first_name")) + ":")
+    await _continue_captain_flow(message, state)
 
 
 @user_router.message(RegistrationStates.first_name)
 async def reg_first_name(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     value = message.text.strip()
-    if value == "-":
-        value = data["profile"].get("first_name")
     if not value:
         await message.answer("⚠️ Имя обязательно.")
         return
     captain = data["captain"]
     captain["first_name"] = value
     await state.update_data(captain=captain)
-    await state.set_state(RegistrationStates.middle_name)
-    await message.answer(
-        "Отчество (опционально, отправьте '-' если нет/оставить сохранённое"
-        + _fmt_profile_hint(data["profile"].get("middle_name"))
-        + ")"
-    )
+    await _continue_captain_flow(message, state)
 
 
 @user_router.message(RegistrationStates.middle_name)
 async def reg_middle_name(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     value = message.text.strip()
-    if value == "-":
-        value = data["profile"].get("middle_name")
     captain = data["captain"]
     captain["middle_name"] = value if value and value != "-" else None
     await state.update_data(captain=captain)
-    await state.set_state(RegistrationStates.contact)
-    default_contact = data["profile"].get("contact")
-    await message.answer(
-        "📞 Контакт (@username или телефон)" + _fmt_profile_hint(default_contact) + ":"
-    )
+    await _continue_captain_flow(message, state)
 
 
 @user_router.message(RegistrationStates.contact)
 async def reg_contact(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     value = message.text.strip()
-    if value == "-":
-        value = data["profile"].get("contact")
     if not value and message.from_user.username:
         value = f"@{message.from_user.username}"
     if not value:
@@ -322,12 +374,7 @@ async def reg_contact(message: Message, state: FSMContext) -> None:
     captain = data["captain"]
     captain["contact"] = value
     await state.update_data(captain=captain)
-
-    await state.set_state(RegistrationStates.group_or_not_mipt)
-    await message.answer(
-        "🏫 Укажите, участник с Физтеха или нет:",
-        reply_markup=group_choice_kb(),
-    )
+    await _continue_captain_flow(message, state)
 
 
 @user_router.callback_query(RegistrationStates.group_or_not_mipt, F.data.in_({"group_mipt", "group_not_mipt"}))
@@ -337,11 +384,15 @@ async def reg_group_choice(callback: CallbackQuery, state: FSMContext) -> None:
 
     if callback.data == "group_mipt":
         captain["is_not_mipt"] = False
-        await state.update_data(captain=captain)
-        await state.set_state(RegistrationStates.group_name)
-        await callback.message.answer(
-            "Группа (например, Б01-... )" + _fmt_profile_hint(data["profile"].get("group_name")) + ":"
-        )
+        saved_group = data.get("profile", {}).get("group_name")
+        if saved_group:
+            captain["group_name"] = saved_group
+            await state.update_data(captain=captain)
+            await _after_captain_ready(callback.message, state)
+        else:
+            await state.update_data(captain=captain)
+            await state.set_state(RegistrationStates.group_name)
+            await callback.message.answer("🏫 Группа (например, Б01-...):")
     else:
         captain["is_not_mipt"] = True
         captain["group_name"] = None
@@ -354,14 +405,12 @@ async def reg_group_choice(callback: CallbackQuery, state: FSMContext) -> None:
 
 @user_router.message(RegistrationStates.group_name)
 async def reg_group_name(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
     value = message.text.strip()
-    if value == "-":
-        value = data["profile"].get("group_name")
     if not value:
         await message.answer("⚠️ Группа обязательна для участников с Физтеха.")
         return
 
+    data = await state.get_data()
     captain = data["captain"]
     captain["group_name"] = value
     captain["is_not_mipt"] = False
@@ -537,34 +586,6 @@ async def passport_number(message: Message, state: FSMContext) -> None:
     passport = data.get("passport_data", {})
     passport["number"] = value
     await state.update_data(passport_data=passport)
-    await state.set_state(RegistrationStates.passport_issued_by)
-    await message.answer("🏢 Кем выдан:")
-
-
-@user_router.message(RegistrationStates.passport_issued_by)
-async def passport_issued_by(message: Message, state: FSMContext) -> None:
-    value = message.text.strip()
-    if not value:
-        await message.answer("⚠️ Поле обязательное.")
-        return
-    data = await state.get_data()
-    passport = data.get("passport_data", {})
-    passport["issued_by"] = value
-    await state.update_data(passport_data=passport)
-    await state.set_state(RegistrationStates.passport_division_code)
-    await message.answer("🔐 Код подразделения:")
-
-
-@user_router.message(RegistrationStates.passport_division_code)
-async def passport_division_code(message: Message, state: FSMContext) -> None:
-    value = message.text.strip()
-    if not value:
-        await message.answer("⚠️ Поле обязательное.")
-        return
-    data = await state.get_data()
-    passport = data.get("passport_data", {})
-    passport["division_code"] = value
-    await state.update_data(passport_data=passport)
     await state.set_state(RegistrationStates.passport_issue_date)
     await message.answer("📅 Дата выдачи (YYYY-MM-DD):")
 
@@ -582,52 +603,6 @@ async def passport_issue_date(message: Message, state: FSMContext) -> None:
     passport = data.get("passport_data", {})
     passport["issue_date"] = parsed.isoformat()
     await state.update_data(passport_data=passport)
-    await state.set_state(RegistrationStates.birth_date)
-    await message.answer("🎂 Дата рождения (YYYY-MM-DD):")
-
-
-@user_router.message(RegistrationStates.birth_date)
-async def birth_date_step(message: Message, state: FSMContext) -> None:
-    value = message.text.strip()
-    try:
-        parsed = _parse_date(value)
-    except ValueError:
-        await message.answer("⚠️ Ожидается формат YYYY-MM-DD.")
-        return
-
-    data = await state.get_data()
-    passport = data.get("passport_data", {})
-    passport["birth_date"] = parsed.isoformat()
-    await state.update_data(passport_data=passport)
-    await state.set_state(RegistrationStates.birth_place)
-    await message.answer("🌍 Место рождения:")
-
-
-@user_router.message(RegistrationStates.birth_place)
-async def birth_place_step(message: Message, state: FSMContext) -> None:
-    value = message.text.strip()
-    if not value:
-        await message.answer("⚠️ Поле обязательное.")
-        return
-
-    data = await state.get_data()
-    passport = data.get("passport_data", {})
-    passport["birth_place"] = value
-    await state.update_data(passport_data=passport)
-    await state.set_state(RegistrationStates.registration_address)
-    await message.answer("🏠 Адрес регистрации:")
-
-
-@user_router.message(RegistrationStates.registration_address)
-async def registration_address_step(message: Message, state: FSMContext) -> None:
-    value = message.text.strip()
-    if not value:
-        await message.answer("⚠️ Поле обязательное.")
-        return
-
-    data = await state.get_data()
-    passport = data.get("passport_data", {})
-    passport["registration_address"] = value
 
     target = data.get("passport_target")
     if target == "captain":
@@ -682,12 +657,7 @@ async def _finalize_registration(message: Message, state: FSMContext) -> None:
             PassportInput(
                 series=captain_passport["series"],
                 number=captain_passport["number"],
-                issued_by=captain_passport["issued_by"],
-                division_code=captain_passport["division_code"],
                 issue_date=_parse_date(captain_passport["issue_date"]),
-                birth_date=_parse_date(captain_passport["birth_date"]),
-                birth_place=captain_passport["birth_place"],
-                registration_address=captain_passport["registration_address"],
             )
             if captain_passport
             else None
@@ -708,12 +678,7 @@ async def _finalize_registration(message: Message, state: FSMContext) -> None:
                 passport=PassportInput(
                     series=passport["series"],
                     number=passport["number"],
-                    issued_by=passport["issued_by"],
-                    division_code=passport["division_code"],
                     issue_date=_parse_date(passport["issue_date"]),
-                    birth_date=_parse_date(passport["birth_date"]),
-                    birth_place=passport["birth_place"],
-                    registration_address=passport["registration_address"],
                 ),
             )
         )

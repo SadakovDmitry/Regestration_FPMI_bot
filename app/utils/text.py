@@ -26,9 +26,9 @@ def render_event_card(event: Event) -> str:
 
     return (
         f"🎯 {event.title}\n\n"
-        f"🗓 Когда: {start_at_local:%d.%m.%Y %H:%M} ({settings.timezone})\n"
+        f"🗓 Когда: {start_at_local:%d.%m.%Y %H:%M}\n"
         f"📍 Место: {event.location}\n"
         f"📝 Регистрация: {reg_start_local:%d.%m %H:%M}"
-        f" — {reg_end_local:%d.%m %H:%M} ({settings.timezone})\n"
+        f" — {reg_end_local:%d.%m %H:%M}\n"
         f"👥 {limits}"
     )

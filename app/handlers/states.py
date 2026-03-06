@@ -48,10 +48,5 @@ class RegistrationStates(StatesGroup):
 
     passport_series = State()
     passport_number = State()
-    passport_issued_by = State()
-    passport_division_code = State()
     passport_issue_date = State()
-    birth_date = State()
-    birth_place = State()
-    registration_address = State()
     confirm = State()

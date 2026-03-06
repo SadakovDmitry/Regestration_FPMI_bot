@@ -36,7 +36,7 @@ class NotificationService:
             kind=DeliveryKind.new_event,
             text=(
                 f"🎉 Новое мероприятие: {event.title}\n"
-                f"🗓 Когда: {format_dt_tz(event.start_at)} ({self.settings.timezone})\n"
+                f"🗓 Когда: {format_dt_tz(event.start_at)}\n"
                 "Жми «Открыть мероприятие», чтобы посмотреть детали и зарегистрироваться."
             ),
             markup=self._event_cta(event.id),
@@ -48,7 +48,7 @@ class NotificationService:
             kind=DeliveryKind.registration_started,
             text=(
                 f"🚀 Регистрация на «{event.title}» уже открыта!\n"
-                f"Успей до {format_dt_tz(event.registration_end_at)} ({self.settings.timezone})."
+                f"Успей до {format_dt_tz(event.registration_end_at)}."
             ),
             markup=self._event_cta(event.id),
         )

@@ -78,11 +78,6 @@ def not_mipt_person(contact: str = "@user") -> PersonInput:
         passport=PassportInput(
             series="1234",
             number="567890",
-            issued_by="ОВД",
-            division_code="770-001",
             issue_date=date(2020, 1, 1),
-            birth_date=date(2000, 1, 1),
-            birth_place="Москва",
-            registration_address="Москва, ул. Ленина, 1",
         ),
     )

@@ -294,12 +294,7 @@ class RegistrationService:
             is_not_mipt=person.is_not_mipt,
             passport_series=passport.series if passport else None,
             passport_number=passport.number if passport else None,
-            passport_issued_by=passport.issued_by if passport else None,
-            passport_division_code=passport.division_code if passport else None,
             passport_issue_date=passport.issue_date if passport else None,
-            birth_date=passport.birth_date if passport else None,
-            birth_place=passport.birth_place if passport else None,
-            registration_address=passport.registration_address if passport else None,
         )
 
     async def _persist_profile(self, user_id: int, person: PersonInput) -> None:

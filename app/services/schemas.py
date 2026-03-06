@@ -8,12 +8,7 @@ from datetime import date, datetime
 class PassportInput:
     series: str
     number: str
-    issued_by: str
-    division_code: str
     issue_date: date
-    birth_date: date
-    birth_place: str
-    registration_address: str
 
 
 @dataclass(slots=True)

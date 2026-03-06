@@ -22,6 +22,7 @@ from app.services.export_service import ExportService
 from app.services.publication_service import PublicationService
 from app.services.schemas import EventCreateInput
 from app.utils.datetime import parse_dt
+from app.utils.text import format_dt_tz
 
 admin_router = Router(name="admin")
 settings = get_settings()
@@ -400,6 +401,7 @@ async def admin_regs_show(callback: CallbackQuery) -> None:
 
     event_id = int(callback.data.split(":", maxsplit=1)[1])
     async with AsyncSessionLocal() as session:
+        event = await EventService(session).get(event_id)
         regs = await RegistrationRepository(session).list_by_event(event_id)
 
     if not regs:
@@ -407,14 +409,51 @@ async def admin_regs_show(callback: CallbackQuery) -> None:
         await callback.answer()
         return
 
-    lines = ["Регистрации:"]
+    status_counts: dict[str, int] = {}
+    for reg in regs:
+        status_counts[reg.status.value] = status_counts.get(reg.status.value, 0) + 1
+
+    header = (
+        f"🧾 Регистрации на событие #{event_id}"
+        + (f": {event.title}" if event else "")
+        + "\n"
+    )
+    if event:
+        header += (
+            f"📍 Место: {event.location}\n"
+            f"🗓 Время: {format_dt_tz(event.start_at)}\n"
+        )
+    header += f"👥 Всего: {len(regs)}"
+    if status_counts:
+        header += " | " + ", ".join(
+            f"{status}={count}" for status, count in sorted(status_counts.items())
+        )
+
+    blocks: list[str] = []
     for reg in regs[:50]:
         captain = next((p for p in reg.people if p.role.value in {"captain", "solo"}), None)
-        not_mipt = "not_mipt" if reg.has_not_mipt_members else "mipt"
         who = f"{captain.last_name} {captain.first_name}" if captain else f"user:{reg.user_id}"
-        lines.append(f"#{reg.id} {reg.status.value} {not_mipt} {who} team={reg.team_name or '-'}")
+        mipt_flag = "🚧 есть не с Физтеха" if reg.has_not_mipt_members else "🏫 все с Физтеха"
+        team = reg.team_name or "—"
+        team_size = reg.team_size if reg.team_size is not None else "—"
 
-    await callback.message.answer("\n".join(lines))
+        blocks.append(
+            "\n".join(
+                [
+                    f"#{reg.id} | {reg.status.value}",
+                    f"👤 {who}",
+                    f"👥 Команда: {team} (размер: {team_size})",
+                    f"{mipt_flag}",
+                    f"🕒 Создано: {format_dt_tz(reg.created_at)}",
+                ]
+            )
+        )
+
+    tail = ""
+    if len(regs) > 50:
+        tail = f"\n\nПоказаны первые 50 из {len(regs)}."
+
+    await callback.message.answer(header + "\n\n" + "\n\n".join(blocks) + tail)
     await callback.answer()
 
 

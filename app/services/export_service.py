@@ -30,12 +30,7 @@ class ExportService:
                 "is_not_mipt",
                 "passport_series",
                 "passport_number",
-                "passport_issued_by",
-                "passport_division_code",
                 "passport_issue_date",
-                "birth_date",
-                "birth_place",
-                "registration_address",
             ]
         )
         for reg in registrations:
@@ -58,12 +53,7 @@ class ExportService:
                         "1" if person.is_not_mipt else "0",
                         person.passport_series or "",
                         person.passport_number or "",
-                        person.passport_issued_by or "",
-                        person.passport_division_code or "",
                         person.passport_issue_date.isoformat() if person.passport_issue_date else "",
-                        person.birth_date.isoformat() if person.birth_date else "",
-                        person.birth_place or "",
-                        person.registration_address or "",
                     ]
                 )
         return output.getvalue().encode("utf-8")
@@ -89,12 +79,7 @@ class ExportService:
                 "is_not_mipt",
                 "passport_series",
                 "passport_number",
-                "passport_issued_by",
-                "passport_division_code",
                 "passport_issue_date",
-                "birth_date",
-                "birth_place",
-                "registration_address",
             ]
         )
 
@@ -118,12 +103,7 @@ class ExportService:
                         person.is_not_mipt,
                         person.passport_series or "",
                         person.passport_number or "",
-                        person.passport_issued_by or "",
-                        person.passport_division_code or "",
                         person.passport_issue_date.isoformat() if person.passport_issue_date else "",
-                        person.birth_date.isoformat() if person.birth_date else "",
-                        person.birth_place or "",
-                        person.registration_address or "",
                     ]
                 )
 
@@ -147,12 +127,7 @@ class ExportService:
                 "middle_name",
                 "passport_series",
                 "passport_number",
-                "passport_issued_by",
-                "passport_division_code",
                 "passport_issue_date",
-                "birth_date",
-                "birth_place",
-                "registration_address",
             ]
         )
         for reg in registrations:
@@ -172,12 +147,7 @@ class ExportService:
                         person.middle_name or "",
                         person.passport_series or "",
                         person.passport_number or "",
-                        person.passport_issued_by or "",
-                        person.passport_division_code or "",
                         person.passport_issue_date.isoformat() if person.passport_issue_date else "",
-                        person.birth_date.isoformat() if person.birth_date else "",
-                        person.birth_place or "",
-                        person.registration_address or "",
                     ]
                 )
         return output.getvalue().encode("utf-8")

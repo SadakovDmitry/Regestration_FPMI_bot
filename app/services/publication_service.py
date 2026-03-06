@@ -8,13 +8,11 @@ from aiogram import Bot
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.models import Event
 from app.models.enums import EventStatus
 from app.services.event_service import EventService
 from app.services.exceptions import NotFoundError
 from app.services.notification_service import NotificationService
-from app.utils.text import format_dt_tz, render_event_card
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +28,6 @@ class PublicationService:
     def __init__(self, session: AsyncSession, bot: Bot):
         self.session = session
         self.bot = bot
-        self.settings = get_settings()
 
     async def publish_event(self, event_id: int, now: datetime | None = None) -> PublishResult:
         now = now or datetime.now(tz=UTC)
@@ -46,19 +43,8 @@ class PublicationService:
 
         event = await EventService(self.session).publish(event_id=event_id, now=now)
 
-        if self.settings.channel_id:
-            if event.photo_file_id:
-                channel_message = await self.bot.send_photo(
-                    chat_id=self.settings.channel_id,
-                    photo=event.photo_file_id,
-                    caption=render_event_card(event) + "\n\nРегистрируйся через бота.",
-                )
-            else:
-                channel_message = await self.bot.send_message(
-                    chat_id=self.settings.channel_id,
-                    text=render_event_card(event) + "\n\nРегистрируйся через бота.",
-                )
-            event.channel_post_message_id = channel_message.message_id
+        # Channel posting is intentionally disabled:
+        # all notifications are delivered only in direct messages.
 
         event.planned_publish_at = None
         sent = await NotificationService(self.session, self.bot).notify_new_event(event)
@@ -113,15 +99,6 @@ class PublicationService:
             event.registration_open_notified_at is None
             and event.registration_start_at <= now <= event.registration_end_at
         ):
-            if self.settings.channel_id:
-                message = await self.bot.send_message(
-                    chat_id=self.settings.channel_id,
-                    text=(
-                        f"🔔 Регистрация на мероприятие «{event.title}» началась!\n"
-                        f"Успейте до {format_dt_tz(event.registration_end_at)} ({self.settings.timezone})."
-                    ),
-                )
-                event.registration_open_post_message_id = message.message_id
             event.registration_open_notified_at = now
             sent = await notifier.notify_registration_started(event)
             logger.info(
@@ -135,15 +112,6 @@ class PublicationService:
             event.registration_close_soon_notified_at is None
             and event.registration_end_at - timedelta(hours=1) <= now < event.registration_end_at
         ):
-            if self.settings.channel_id:
-                message = await self.bot.send_message(
-                    chat_id=self.settings.channel_id,
-                    text=(
-                        f"⏳ До завершения регистрации на «{event.title}» остался 1 час.\n"
-                        "Если еще не зарегистрировались — сейчас самое время."
-                    ),
-                )
-                event.registration_close_soon_post_message_id = message.message_id
             event.registration_close_soon_notified_at = now
             sent = await notifier.notify_registration_ends_soon(event)
             logger.info(

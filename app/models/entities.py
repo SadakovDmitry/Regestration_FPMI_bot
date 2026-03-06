@@ -132,12 +132,7 @@ class RegistrationPerson(Base):
 
     passport_series: Mapped[str | None] = mapped_column(String(16), nullable=True)
     passport_number: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    passport_issued_by: Mapped[str | None] = mapped_column(Text, nullable=True)
-    passport_division_code: Mapped[str | None] = mapped_column(String(16), nullable=True)
     passport_issue_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
-    birth_place: Mapped[str | None] = mapped_column(Text, nullable=True)
-    registration_address: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     registration: Mapped[Registration] = relationship(back_populates="people")
 
