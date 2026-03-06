@@ -7,8 +7,7 @@ from app.models import Event
 def events_admin_list_kb(events: list[Event], prefix: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for event in events:
-        status = event.status.value
-        kb.button(text=f"{event.id}. {event.title} [{status}]", callback_data=f"{prefix}:{event.id}")
+        kb.button(text=event.title, callback_data=f"{prefix}:{event.id}")
     kb.adjust(1)
     return kb.as_markup()
 

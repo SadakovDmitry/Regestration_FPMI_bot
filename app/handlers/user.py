@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.db import AsyncSessionLocal
@@ -109,14 +110,13 @@ async def _continue_captain_flow(message: Message, state: FSMContext) -> None:
             return
 
     if not captain.get("contact"):
-        saved_contact = profile.get("contact") or (f"@{message.from_user.username}" if message.from_user.username else None)
-        if saved_contact:
-            captain["contact"] = saved_contact
-            await state.update_data(captain=captain)
-        else:
-            await state.set_state(RegistrationStates.contact)
-            await message.answer("📞 Контакт (@username или телефон):")
-            return
+        saved_contact = (
+            profile.get("contact")
+            or _auto_contact_from_username(message.from_user.username)
+            or f"id:{message.from_user.id}"
+        )
+        captain["contact"] = saved_contact
+        await state.update_data(captain=captain)
 
     if captain.get("is_not_mipt") is None and profile.get("is_not_mipt") is not None:
         captain["is_not_mipt"] = bool(profile.get("is_not_mipt"))
@@ -361,12 +361,20 @@ async def passport_check(callback: CallbackQuery) -> None:
 
 @user_router.callback_query(F.data.startswith("passport_ok:"))
 async def passport_ok(callback: CallbackQuery) -> None:
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
     await callback.answer("Принято ✅")
 
 
 @user_router.callback_query(F.data.startswith("passport_refill:"))
 async def passport_refill(callback: CallbackQuery) -> None:
     event_id = int(callback.data.split(":", maxsplit=1)[1])
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except TelegramBadRequest:
+        pass
     await callback.message.answer(
         "Чтобы заполнить данные заново, нужно отменить текущую регистрацию и зарегистрироваться снова.",
         reply_markup=_refill_help_kb(event_id),
@@ -910,7 +918,7 @@ async def profile_view(message: Message) -> None:
                 user.contact = auto_contact
                 await session.commit()
 
-    if user.is_not_mipt:
+    if user.is_not_mipt is True:
         issue_date_text = user.passport_issue_date.strftime("%d.%m.%Y") if user.passport_issue_date else "-"
         extra = (
             "Статус: Не с Физтеха\n"
@@ -918,11 +926,13 @@ async def profile_view(message: Message) -> None:
             f"Номер паспорта: {user.passport_number or '-'}\n"
             f"Дата выдачи: {issue_date_text}"
         )
-    else:
+    elif user.is_not_mipt is False:
         extra = (
             "Статус: С Физтеха\n"
             f"Группа: {user.group_name or '-'}"
         )
+    else:
+        extra = "Статус: не указан"
 
     text = (
         "👤 Твой профиль:\n"
@@ -1025,9 +1035,17 @@ async def profile_middle_name(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     profile = data["profile"]
     profile["middle_name"] = None if value == "-" else value
+    profile["contact"] = (
+        profile.get("contact")
+        or _auto_contact_from_username(message.from_user.username)
+        or f"id:{message.from_user.id}"
+    )
     await state.update_data(profile=profile)
-    await state.set_state(ProfileStates.contact)
-    await message.answer("📞 Контакт:")
+    await state.set_state(ProfileStates.group_or_not_mipt)
+    await message.answer(
+        "🏫 Укажи, ты с Физтеха или нет:",
+        reply_markup=group_choice_kb(),
+    )
 
 
 @user_router.message(ProfileStates.contact)

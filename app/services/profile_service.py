@@ -43,7 +43,7 @@ class ProfileService:
         user.first_name = None
         user.middle_name = None
         user.contact = None
-        user.is_not_mipt = False
+        user.is_not_mipt = None
         user.group_name = None
         user.passport_series = None
         user.passport_number = None

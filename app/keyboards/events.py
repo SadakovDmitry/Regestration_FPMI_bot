@@ -8,7 +8,7 @@ from app.models.enums import EventType
 def events_list_kb(events: list[Event]) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     for event in events:
-        kb.button(text=f"{event.title} ({event.start_at:%d.%m %H:%M})", callback_data=f"event_open:{event.id}")
+        kb.button(text=event.title, callback_data=f"event_open:{event.id}")
     kb.adjust(1)
     return kb.as_markup()
 

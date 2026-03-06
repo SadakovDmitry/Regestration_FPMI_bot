@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.handlers.admin import admin_router
 from app.handlers.user import user_router
 from app.logging_config import setup_logging
+from app.middlewares import HideUsedInlineKeyboardMiddleware
 
 
 async def main() -> None:
@@ -18,6 +19,7 @@ async def main() -> None:
 
     bot = Bot(token=settings.bot_token)
     dp = Dispatcher(storage=MemoryStorage())
+    dp.callback_query.middleware(HideUsedInlineKeyboardMiddleware())
 
     dp.include_router(admin_router)
     dp.include_router(user_router)

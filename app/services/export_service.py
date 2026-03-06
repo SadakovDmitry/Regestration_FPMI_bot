@@ -12,8 +12,8 @@ from app.models.enums import PersonRole, RegistrationStatus
 class ExportService:
     @staticmethod
     def export_csv(registrations: list[Registration], only_confirmed: bool = False) -> bytes:
-        output = StringIO()
-        writer = csv.writer(output)
+        output = StringIO(newline="")
+        writer = csv.writer(output, delimiter=";", lineterminator="\n")
         writer.writerow(
             [
                 "registration_id",
@@ -56,7 +56,7 @@ class ExportService:
                         person.passport_issue_date.isoformat() if person.passport_issue_date else "",
                     ]
                 )
-        return output.getvalue().encode("utf-8")
+        return output.getvalue().encode("utf-8-sig")
 
     @staticmethod
     def export_xlsx(registrations: list[Registration], only_confirmed: bool = False) -> bytes:
@@ -114,8 +114,8 @@ class ExportService:
 
     @staticmethod
     def export_passes_csv(registrations: list[Registration]) -> bytes:
-        output = StringIO()
-        writer = csv.writer(output)
+        output = StringIO(newline="")
+        writer = csv.writer(output, delimiter=";", lineterminator="\n")
         writer.writerow(
             [
                 "event_id",
@@ -150,4 +150,4 @@ class ExportService:
                         person.passport_issue_date.isoformat() if person.passport_issue_date else "",
                     ]
                 )
-        return output.getvalue().encode("utf-8")
+        return output.getvalue().encode("utf-8-sig")
