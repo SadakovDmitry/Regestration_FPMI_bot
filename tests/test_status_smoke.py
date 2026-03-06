@@ -33,6 +33,12 @@ async def test_team_flow_smoke(session):
 
     assert reg.status == RegistrationStatus.registered
     assert reg.has_not_mipt_members is True
+    await session.flush()
+    await session.refresh(user)
+    assert user.is_not_mipt is True
+    assert user.passport_series == "1234"
+    assert user.passport_number == "567890"
+    assert user.passport_issue_date is not None
 
     await service.request_confirmation_for_event(event.id, now=now)
     await service.respond_confirmation(reg.id, going=True, now=now)

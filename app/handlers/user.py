@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime
 from aiogram import F, Router
 from aiogram.filters import CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
 from app.db import AsyncSessionLocal
 from app.handlers.states import ProfileStates, RegistrationStates
@@ -49,6 +49,28 @@ def _fmt_profile_hint(value: str | None) -> str:
     if value:
         return f" или '-' для сохранённого ({value})"
     return ""
+
+
+def _auto_contact_from_username(username: str | None) -> str | None:
+    return f"@{username}" if username else None
+
+
+def _passport_review_kb(event_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Ок", callback_data=f"passport_ok:{event_id}")],
+            [InlineKeyboardButton(text="✍️ Заполнить заново", callback_data=f"passport_refill:{event_id}")],
+        ]
+    )
+
+
+def _refill_help_kb(event_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Открыть мероприятие", callback_data=f"event_open:{event_id}")],
+            [InlineKeyboardButton(text="Мои регистрации", callback_data="my_regs")],
+        ]
+    )
 
 
 async def _continue_captain_flow(message: Message, state: FSMContext) -> None:
@@ -96,9 +118,28 @@ async def _continue_captain_flow(message: Message, state: FSMContext) -> None:
             await message.answer("📞 Контакт (@username или телефон):")
             return
 
+    if captain.get("is_not_mipt") is None and profile.get("is_not_mipt") is not None:
+        captain["is_not_mipt"] = bool(profile.get("is_not_mipt"))
+        if captain["is_not_mipt"]:
+            if (
+                profile.get("passport_series")
+                and profile.get("passport_number")
+                and profile.get("passport_issue_date")
+            ):
+                captain["passport"] = {
+                    "series": profile["passport_series"],
+                    "number": profile["passport_number"],
+                    "issue_date": profile["passport_issue_date"],
+                }
+        else:
+            if profile.get("group_name"):
+                captain["group_name"] = profile["group_name"]
+        await state.update_data(captain=captain)
+
     if captain.get("is_not_mipt") is True:
         captain["group_name"] = None
-        await state.update_data(captain=captain, pending_after_consent="captain_passport")
+        pending_after_consent = "captain_ready" if captain.get("passport") else "captain_passport"
+        await state.update_data(captain=captain, pending_after_consent=pending_after_consent)
         await state.set_state(RegistrationStates.pd_consent)
         await message.answer(PD_CONSENT_TEXT, reply_markup=pd_consent_kb())
         return
@@ -264,6 +305,75 @@ async def my_waitlist(message: Message) -> None:
     await message.answer("\n".join(lines))
 
 
+@user_router.callback_query(F.data.startswith("passport_check:"))
+async def passport_check(callback: CallbackQuery) -> None:
+    event_id = int(callback.data.split(":", maxsplit=1)[1])
+
+    async with AsyncSessionLocal() as session:
+        user = await UserRepository(session).get_by_tg_id(callback.from_user.id)
+        if not user:
+            await callback.answer("ℹ️ Сначала отправь /start", show_alert=True)
+            return
+
+        regs = await RegistrationRepository(session).list_by_user(user.id)
+
+    reg = next(
+        (
+            item for item in regs
+            if item.event_id == event_id
+            and item.status in (
+                RegistrationStatus.registered,
+                RegistrationStatus.invited_from_waitlist,
+                RegistrationStatus.confirmed,
+            )
+        ),
+        None,
+    )
+    if not reg:
+        await callback.answer("⚠️ Активная регистрация не найдена", show_alert=True)
+        return
+
+    not_mipt_people = [p for p in reg.people if p.is_not_mipt]
+    if not not_mipt_people:
+        await callback.answer("⚠️ Для этой регистрации нет данных для проходки", show_alert=True)
+        return
+
+    lines = ["🛂 Паспортные данные для проходки:"]
+    for idx, person in enumerate(not_mipt_people, start=1):
+        fio = " ".join(part for part in [person.last_name, person.first_name, person.middle_name] if part)
+        lines.append(
+            "\n".join(
+                [
+                    f"{idx}. {fio}",
+                    f"\tСерия: {person.passport_series or '-'}",
+                    f"\tНомер: {person.passport_number or '-'}",
+                    f"\tДата выдачи: {person.passport_issue_date:%d.%m.%Y}" if person.passport_issue_date else "\tДата выдачи: -",
+                ]
+            )
+        )
+
+    await callback.message.answer(
+        "\n\n".join(lines),
+        reply_markup=_passport_review_kb(event_id),
+    )
+    await callback.answer()
+
+
+@user_router.callback_query(F.data.startswith("passport_ok:"))
+async def passport_ok(callback: CallbackQuery) -> None:
+    await callback.answer("Принято ✅")
+
+
+@user_router.callback_query(F.data.startswith("passport_refill:"))
+async def passport_refill(callback: CallbackQuery) -> None:
+    event_id = int(callback.data.split(":", maxsplit=1)[1])
+    await callback.message.answer(
+        "Чтобы заполнить данные заново, нужно отменить текущую регистрацию и зарегистрироваться снова.",
+        reply_markup=_refill_help_kb(event_id),
+    )
+    await callback.answer()
+
+
 @user_router.callback_query(F.data.startswith("cancel_event:"))
 async def cancel_event(callback: CallbackQuery) -> None:
     event_id = int(callback.data.split(":", maxsplit=1)[1])
@@ -308,7 +418,11 @@ async def register_event_start(callback: CallbackQuery, state: FSMContext) -> No
             "first_name": user.first_name,
             "middle_name": user.middle_name,
             "contact": user.contact or (f"@{user.username}" if user.username else None),
+            "is_not_mipt": user.is_not_mipt,
             "group_name": user.group_name,
+            "passport_series": user.passport_series,
+            "passport_number": user.passport_number,
+            "passport_issue_date": user.passport_issue_date.isoformat() if user.passport_issue_date else None,
         }
 
     await state.clear()
@@ -384,6 +498,7 @@ async def reg_group_choice(callback: CallbackQuery, state: FSMContext) -> None:
 
     if callback.data == "group_mipt":
         captain["is_not_mipt"] = False
+        captain["passport"] = None
         saved_group = data.get("profile", {}).get("group_name")
         if saved_group:
             captain["group_name"] = saved_group
@@ -396,7 +511,21 @@ async def reg_group_choice(callback: CallbackQuery, state: FSMContext) -> None:
     else:
         captain["is_not_mipt"] = True
         captain["group_name"] = None
-        await state.update_data(captain=captain, pending_after_consent="captain_passport")
+        saved_profile = data.get("profile", {})
+        if (
+            saved_profile.get("passport_series")
+            and saved_profile.get("passport_number")
+            and saved_profile.get("passport_issue_date")
+        ):
+            captain["passport"] = {
+                "series": saved_profile["passport_series"],
+                "number": saved_profile["passport_number"],
+                "issue_date": saved_profile["passport_issue_date"],
+            }
+            pending_after_consent = "captain_ready"
+        else:
+            pending_after_consent = "captain_passport"
+        await state.update_data(captain=captain, pending_after_consent=pending_after_consent)
         await state.set_state(RegistrationStates.pd_consent)
         await callback.message.answer(PD_CONSENT_TEXT, reply_markup=pd_consent_kb())
 
@@ -414,6 +543,7 @@ async def reg_group_name(message: Message, state: FSMContext) -> None:
     captain = data["captain"]
     captain["group_name"] = value
     captain["is_not_mipt"] = False
+    captain["passport"] = None
     await state.update_data(captain=captain)
 
     await _after_captain_ready(message, state)
@@ -429,6 +559,8 @@ async def reg_pd_consent(callback: CallbackQuery, state: FSMContext) -> None:
         await state.update_data(passport_target="captain", passport_data={})
         await state.set_state(RegistrationStates.passport_series)
         await callback.message.answer("🛂 Паспорт: серия")
+    elif pending == "captain_ready":
+        await _after_captain_ready(callback.message, state)
     elif pending == "team_members":
         await state.update_data(current_member_idx=0, current_member={})
         await state.set_state(RegistrationStates.member_last_name)
@@ -772,6 +904,25 @@ async def profile_view(message: Message) -> None:
         if not user:
             await message.answer("ℹ️ Сначала отправь /start, чтобы активировать профиль.")
             return
+        if not user.contact:
+            auto_contact = _auto_contact_from_username(user.username)
+            if auto_contact:
+                user.contact = auto_contact
+                await session.commit()
+
+    if user.is_not_mipt:
+        issue_date_text = user.passport_issue_date.strftime("%d.%m.%Y") if user.passport_issue_date else "-"
+        extra = (
+            "Статус: Не с Физтеха\n"
+            f"Серия паспорта: {user.passport_series or '-'}\n"
+            f"Номер паспорта: {user.passport_number or '-'}\n"
+            f"Дата выдачи: {issue_date_text}"
+        )
+    else:
+        extra = (
+            "Статус: С Физтеха\n"
+            f"Группа: {user.group_name or '-'}"
+        )
 
     text = (
         "👤 Твой профиль:\n"
@@ -779,7 +930,7 @@ async def profile_view(message: Message) -> None:
         f"Имя: {user.first_name or '-'}\n"
         f"Отчество: {user.middle_name or '-'}\n"
         f"Контакт: {user.contact or '-'}\n"
-        f"Группа: {user.group_name or '-'}"
+        f"{extra}"
     )
     await message.answer(
         text,
@@ -791,6 +942,11 @@ async def profile_view(message: Message) -> None:
 async def profile_edit_start(callback: CallbackQuery, state: FSMContext) -> None:
     async with AsyncSessionLocal() as session:
         user = await UserRepository(session).get_by_tg_id(callback.from_user.id)
+        if user and not user.contact:
+            auto_contact = _auto_contact_from_username(user.username)
+            if auto_contact:
+                user.contact = auto_contact
+                await session.commit()
     if not user:
         await callback.answer("ℹ️ Сначала отправь /start", show_alert=True)
         return
@@ -802,7 +958,11 @@ async def profile_edit_start(callback: CallbackQuery, state: FSMContext) -> None
             "first_name": user.first_name,
             "middle_name": user.middle_name,
             "contact": user.contact,
+            "is_not_mipt": user.is_not_mipt,
             "group_name": user.group_name,
+            "passport_series": user.passport_series,
+            "passport_number": user.passport_number,
+            "passport_issue_date": user.passport_issue_date.isoformat() if user.passport_issue_date else None,
         }
     )
     await state.set_state(ProfileStates.last_name)
@@ -874,6 +1034,10 @@ async def profile_middle_name(message: Message, state: FSMContext) -> None:
 async def profile_contact(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     value = message.text.strip()
+    if value == "-":
+        value = data["profile"].get("contact")
+    if not value:
+        value = _auto_contact_from_username(message.from_user.username)
     if not value:
         await message.answer("⚠️ Контакт обязателен.")
         return
@@ -881,8 +1045,67 @@ async def profile_contact(message: Message, state: FSMContext) -> None:
     profile = data["profile"]
     profile["contact"] = value
     await state.update_data(profile=profile)
-    await state.set_state(ProfileStates.group_name)
-    await message.answer("🏫 Группа:")
+    await state.set_state(ProfileStates.group_or_not_mipt)
+    await message.answer(
+        "🏫 Укажи, ты с Физтеха или нет:",
+        reply_markup=group_choice_kb(),
+    )
+
+
+async def _save_profile(message: Message, state: FSMContext, profile: dict) -> None:
+    async with AsyncSessionLocal() as session:
+        user = await UserRepository(session).get_by_tg_id(message.from_user.id)
+        if not user:
+            await message.answer("ℹ️ Сначала отправь /start, чтобы активировать профиль.")
+            return
+
+        passport = None
+        if profile.get("is_not_mipt"):
+            passport = PassportInput(
+                series=profile["passport_series"],
+                number=profile["passport_number"],
+                issue_date=_parse_date(profile["passport_issue_date"]),
+            )
+
+        await ProfileService(session).update(
+            user.id,
+            PersonInput(
+                last_name=profile["last_name"],
+                first_name=profile["first_name"],
+                middle_name=profile.get("middle_name"),
+                contact=profile["contact"],
+                group_name=profile.get("group_name"),
+                is_not_mipt=bool(profile.get("is_not_mipt")),
+                passport=passport,
+            ),
+        )
+        await session.commit()
+
+    await state.clear()
+    await message.answer("✅ Профиль обновлён. В следующий раз часть данных подставлю автоматически.")
+
+
+@user_router.callback_query(ProfileStates.group_or_not_mipt, F.data.in_({"group_mipt", "group_not_mipt"}))
+async def profile_group_choice(callback: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    profile = data["profile"]
+
+    if callback.data == "group_mipt":
+        profile["is_not_mipt"] = False
+        profile["passport_series"] = None
+        profile["passport_number"] = None
+        profile["passport_issue_date"] = None
+        await state.update_data(profile=profile)
+        await state.set_state(ProfileStates.group_name)
+        await callback.message.answer("🏫 Группа:")
+    else:
+        profile["is_not_mipt"] = True
+        profile["group_name"] = None
+        await state.update_data(profile=profile)
+        await state.set_state(ProfileStates.passport_series)
+        await callback.message.answer("🛂 Серия паспорта:")
+
+    await callback.answer()
 
 
 @user_router.message(ProfileStates.group_name)
@@ -895,26 +1118,51 @@ async def profile_group_name(message: Message, state: FSMContext) -> None:
 
     profile = data["profile"]
     profile["group_name"] = value
+    profile["is_not_mipt"] = False
+    await state.update_data(profile=profile)
+    await _save_profile(message, state, profile)
 
-    async with AsyncSessionLocal() as session:
-        user = await UserRepository(session).get_by_tg_id(message.from_user.id)
-        if not user:
-            await message.answer("ℹ️ Сначала отправь /start, чтобы активировать профиль.")
-            return
 
-        await ProfileService(session).update(
-            user.id,
-            PersonInput(
-                last_name=profile["last_name"],
-                first_name=profile["first_name"],
-                middle_name=profile.get("middle_name"),
-                contact=profile["contact"],
-                group_name=profile["group_name"],
-                is_not_mipt=False,
-                passport=None,
-            ),
-        )
-        await session.commit()
+@user_router.message(ProfileStates.passport_series)
+async def profile_passport_series(message: Message, state: FSMContext) -> None:
+    value = message.text.strip()
+    if not value:
+        await message.answer("⚠️ Серия обязательна.")
+        return
+    data = await state.get_data()
+    profile = data["profile"]
+    profile["passport_series"] = value
+    await state.update_data(profile=profile)
+    await state.set_state(ProfileStates.passport_number)
+    await message.answer("🛂 Номер паспорта:")
 
-    await state.clear()
-    await message.answer("✅ Профиль обновлён. В следующий раз часть данных подставлю автоматически.")
+
+@user_router.message(ProfileStates.passport_number)
+async def profile_passport_number(message: Message, state: FSMContext) -> None:
+    value = message.text.strip()
+    if not value:
+        await message.answer("⚠️ Номер обязателен.")
+        return
+    data = await state.get_data()
+    profile = data["profile"]
+    profile["passport_number"] = value
+    await state.update_data(profile=profile)
+    await state.set_state(ProfileStates.passport_issue_date)
+    await message.answer("📅 Дата выдачи (YYYY-MM-DD):")
+
+
+@user_router.message(ProfileStates.passport_issue_date)
+async def profile_passport_issue_date(message: Message, state: FSMContext) -> None:
+    value = message.text.strip()
+    try:
+        parsed = _parse_date(value)
+    except ValueError:
+        await message.answer("⚠️ Ожидается формат YYYY-MM-DD.")
+        return
+
+    data = await state.get_data()
+    profile = data["profile"]
+    profile["passport_issue_date"] = parsed.isoformat()
+    profile["is_not_mipt"] = True
+    await state.update_data(profile=profile)
+    await _save_profile(message, state, profile)

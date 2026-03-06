@@ -25,7 +25,16 @@ class ProfileService:
         user.first_name = person.first_name
         user.middle_name = person.middle_name
         user.contact = person.contact
-        user.group_name = person.group_name
+        user.is_not_mipt = person.is_not_mipt
+        user.group_name = person.group_name if not person.is_not_mipt else None
+        if person.is_not_mipt and person.passport:
+            user.passport_series = person.passport.series
+            user.passport_number = person.passport.number
+            user.passport_issue_date = person.passport.issue_date
+        else:
+            user.passport_series = None
+            user.passport_number = None
+            user.passport_issue_date = None
         return user
 
     async def clear(self, user_id: int) -> User:
@@ -34,5 +43,9 @@ class ProfileService:
         user.first_name = None
         user.middle_name = None
         user.contact = None
+        user.is_not_mipt = False
         user.group_name = None
+        user.passport_series = None
+        user.passport_number = None
+        user.passport_issue_date = None
         return user

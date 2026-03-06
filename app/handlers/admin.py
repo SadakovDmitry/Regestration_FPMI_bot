@@ -13,7 +13,7 @@ from app.db import AsyncSessionLocal
 from app.handlers.states import EventCreateStates, PublishScheduleStates
 from app.keyboards.admin import events_admin_list_kb, export_kind_kb, publish_mode_kb
 from app.keyboards.common import admin_menu_kb
-from app.keyboards.events import event_type_kb
+from app.keyboards.events import event_type_kb, yes_no_kb
 from app.models.enums import EventStatus, RegistrationStatus
 from app.repositories.registrations import RegistrationRepository
 from app.services.admin_service import AdminService
@@ -199,7 +199,10 @@ async def _send_event_preview(message: Message, state: FSMContext) -> None:
         preview += f"\nКоманда: {data.get('team_min_size')}-{data.get('team_max_size')}"
 
     await state.set_state(EventCreateStates.preview)
-    await message.answer(preview + "\n\nСохранить как draft? (yes/no)")
+    await message.answer(
+        preview + "\n\nСохранить как draft?",
+        reply_markup=yes_no_kb("draft_save_yes", "draft_save_no", yes_text="Да", no_text="Нет"),
+    )
 
 
 @admin_router.message(EventCreateStates.photo, F.photo)
@@ -220,13 +223,7 @@ async def create_event_photo(message: Message, state: FSMContext) -> None:
     await _send_event_preview(message, state)
 
 
-@admin_router.message(EventCreateStates.preview)
-async def create_event_preview(message: Message, state: FSMContext) -> None:
-    if not _is_true(message.text):
-        await state.clear()
-        await message.answer("Создание отменено.")
-        return
-
+async def _save_event_from_state(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     payload = EventCreateInput(
         type=data["type"],
@@ -248,6 +245,26 @@ async def create_event_preview(message: Message, state: FSMContext) -> None:
 
     await state.clear()
     await message.answer(f"Событие создано в draft: id={event.id}")
+
+
+@admin_router.callback_query(EventCreateStates.preview, F.data.in_({"draft_save_yes", "draft_save_no"}))
+async def create_event_preview_callback(callback: CallbackQuery, state: FSMContext) -> None:
+    if callback.data == "draft_save_no":
+        await state.clear()
+        await callback.message.answer("Создание отменено.")
+        await callback.answer()
+        return
+
+    await _save_event_from_state(callback.message, state)
+    await callback.answer()
+
+
+@admin_router.message(EventCreateStates.preview)
+async def create_event_preview_message_fallback(message: Message, state: FSMContext) -> None:
+    if not _is_true(message.text):
+        await message.answer("Нажми кнопку «Да» или «Нет» ниже.")
+        return
+    await _save_event_from_state(message, state)
 
 
 @admin_router.message(F.text == "📋 Список мероприятий")

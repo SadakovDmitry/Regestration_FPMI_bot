@@ -6,7 +6,11 @@ class ProfileStates(StatesGroup):
     first_name = State()
     middle_name = State()
     contact = State()
+    group_or_not_mipt = State()
     group_name = State()
+    passport_series = State()
+    passport_number = State()
+    passport_issue_date = State()
 
 
 class EventCreateStates(StatesGroup):

@@ -32,7 +32,11 @@ class User(TimestampMixin, Base):
     first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     middle_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     contact: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_not_mipt: Mapped[bool] = mapped_column(Boolean, default=False)
     group_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    passport_series: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    passport_number: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    passport_issue_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
     registrations: Mapped[list[Registration]] = relationship(back_populates="user")
 

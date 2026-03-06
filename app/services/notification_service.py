@@ -65,6 +65,9 @@ class NotificationService:
         )
 
     async def notify_waitlist_invites(self, event_id: int) -> int:
+        event = await self.session.get(Event, event_id)
+        event_title = event.title if event else "мероприятие"
+
         result = await self.session.execute(
             select(Registration)
             .join(User, User.id == Registration.user_id)
@@ -84,7 +87,10 @@ class NotificationService:
                 continue
             ok = await self._safe_send(
                 user,
-                text="🔥 Освободилось место! Готов(а) участвовать? Ответь в течение 12 часов.",
+                text=(
+                    f"🔥 Освободилось место на «{event_title}»!\n"
+                    "Готов(а) участвовать? Ответь в течение 12 часов."
+                ),
                 markup=InlineKeyboardMarkup(
                     inline_keyboard=[
                         [
@@ -218,7 +224,7 @@ class NotificationService:
             ok = await self._safe_send(
                 user,
                 text="🛂 Проверь паспортные данные для оформления проходки.",
-                markup=self._my_regs_cta(),
+                markup=self._passport_check_cta(event_id),
             )
             if not ok:
                 continue
@@ -316,6 +322,15 @@ class NotificationService:
     def _my_regs_cta() -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             inline_keyboard=[
+                [InlineKeyboardButton(text="Мои регистрации", callback_data="my_regs")],
+            ]
+        )
+
+    @staticmethod
+    def _passport_check_cta(event_id: int) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text="Проверить данные", callback_data=f"passport_check:{event_id}")],
                 [InlineKeyboardButton(text="Мои регистрации", callback_data="my_regs")],
             ]
         )

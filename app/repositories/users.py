@@ -21,11 +21,26 @@ class UserRepository:
     async def ensure_user(self, tg_id: int, username: str | None) -> User:
         user = await self.get_by_tg_id(tg_id)
         if user:
+            previous_username = user.username
             if user.username != username:
                 user.username = username
+            if not user.contact and username:
+                user.contact = f"@{username}"
+            elif (
+                previous_username
+                and username
+                and user.contact == f"@{previous_username}"
+                and previous_username != username
+            ):
+                user.contact = f"@{username}"
             return user
 
-        user = User(tg_id=tg_id, username=username, is_reachable=True)
+        user = User(
+            tg_id=tg_id,
+            username=username,
+            contact=f"@{username}" if username else None,
+            is_reachable=True,
+        )
         self.session.add(user)
         await self.session.flush()
         return user
