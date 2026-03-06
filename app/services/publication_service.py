@@ -14,7 +14,7 @@ from app.models.enums import EventStatus
 from app.services.event_service import EventService
 from app.services.exceptions import NotFoundError
 from app.services.notification_service import NotificationService
-from app.utils.text import render_event_card
+from app.utils.text import format_dt_tz, render_event_card
 
 logger = logging.getLogger(__name__)
 
@@ -118,12 +118,17 @@ class PublicationService:
                     chat_id=self.settings.channel_id,
                     text=(
                         f"🔔 Регистрация на мероприятие «{event.title}» началась!\n"
-                        f"Успейте до {event.registration_end_at:%d.%m.%Y %H:%M}."
+                        f"Успейте до {format_dt_tz(event.registration_end_at)} ({self.settings.timezone})."
                     ),
                 )
                 event.registration_open_post_message_id = message.message_id
             event.registration_open_notified_at = now
-            await notifier.notify_registration_started(event)
+            sent = await notifier.notify_registration_started(event)
+            logger.info(
+                "Registration started notifications event_id=%s users_sent=%s",
+                event.id,
+                sent,
+            )
             posted.append("registration_open")
 
         if (
@@ -140,7 +145,12 @@ class PublicationService:
                 )
                 event.registration_close_soon_post_message_id = message.message_id
             event.registration_close_soon_notified_at = now
-            await notifier.notify_registration_ends_soon(event)
+            sent = await notifier.notify_registration_ends_soon(event)
+            logger.info(
+                "Registration ending soon notifications event_id=%s users_sent=%s",
+                event.id,
+                sent,
+            )
             posted.append("registration_close_soon")
 
         return posted

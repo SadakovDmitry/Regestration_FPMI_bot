@@ -18,6 +18,7 @@ from app.config import get_settings
 from app.models import Event, Registration, User
 from app.models.enums import DeliveryKind, RegistrationStatus
 from app.repositories.deliveries import DeliveryRepository
+from app.utils.text import format_dt_tz
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class NotificationService:
             kind=DeliveryKind.new_event,
             text=(
                 f"🎉 Новое мероприятие: {event.title}\n"
-                f"🗓 Когда: {event.start_at:%d.%m.%Y %H:%M}\n"
+                f"🗓 Когда: {format_dt_tz(event.start_at)} ({self.settings.timezone})\n"
                 "Жми «Открыть мероприятие», чтобы посмотреть детали и зарегистрироваться."
             ),
             markup=self._event_cta(event.id),
@@ -47,7 +48,7 @@ class NotificationService:
             kind=DeliveryKind.registration_started,
             text=(
                 f"🚀 Регистрация на «{event.title}» уже открыта!\n"
-                f"Успей до {event.registration_end_at:%d.%m.%Y %H:%M}."
+                f"Успей до {format_dt_tz(event.registration_end_at)} ({self.settings.timezone})."
             ),
             markup=self._event_cta(event.id),
         )
@@ -107,6 +108,9 @@ class NotificationService:
         return sent
 
     async def notify_confirmations(self, event_id: int) -> int:
+        event = await self.session.get(Event, event_id)
+        event_title = event.title if event else "мероприятие"
+
         result = await self.session.execute(
             select(Registration).where(
                 Registration.event_id == event_id,
@@ -132,7 +136,10 @@ class NotificationService:
 
             ok = await self._safe_send(
                 user,
-                text="✅ Мероприятие уже скоро. Подтверди участие в течение 12 часов.",
+                text=(
+                    f"✅ «{event_title}» уже скоро.\n"
+                    "Подтверди участие в течение 12 часов."
+                ),
                 markup=InlineKeyboardMarkup(
                     inline_keyboard=[
                         [

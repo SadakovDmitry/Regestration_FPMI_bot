@@ -6,15 +6,15 @@ from datetime import UTC, datetime, timedelta
 from aiogram import Bot
 from celery.utils.log import get_task_logger
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.db import AsyncSessionLocal
+from app.config import get_settings
 from app.jobs.celery_app import celery_app
 from app.models import Event
 from app.models.enums import EventStatus
 from app.services.notification_service import NotificationService
 from app.services.publication_service import PublicationService
 from app.services.registration_service import RegistrationService
-from app.config import get_settings
 
 logger = get_task_logger(__name__)
 
@@ -27,9 +27,11 @@ def process_periodic_workflow() -> None:
 async def _process_periodic_workflow() -> None:
     settings = get_settings()
     bot = Bot(token=settings.bot_token)
+    engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     now = datetime.now(tz=UTC)
-    async with AsyncSessionLocal() as session:
+    async with session_factory() as session:
         reg_service = RegistrationService(session)
         publication_service = PublicationService(session, bot)
 
@@ -63,6 +65,7 @@ async def _process_periodic_workflow() -> None:
 
         await session.commit()
 
+    await engine.dispose()
     await bot.session.close()
     logger.info(
         "Periodic workflow processed published=%s window_posts=%s",

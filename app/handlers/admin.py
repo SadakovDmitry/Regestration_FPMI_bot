@@ -90,37 +90,43 @@ async def create_event_description(message: Message, state: FSMContext) -> None:
     value = message.text.strip()
     await state.update_data(description=None if value == "-" else value)
     await state.set_state(EventCreateStates.reg_start)
-    await message.answer("Старт регистрации UTC (YYYY-MM-DD HH:MM):")
+    await message.answer(
+        f"Старт регистрации ({settings.timezone}) (YYYY-MM-DD HH:MM):"
+    )
 
 
 @admin_router.message(EventCreateStates.reg_start)
 async def create_event_reg_start(message: Message, state: FSMContext) -> None:
     try:
-        reg_start = parse_dt(message.text)
+        reg_start = parse_dt(message.text, settings.timezone)
     except ValueError:
         await message.answer("Неверный формат времени.")
         return
     await state.update_data(registration_start_at=reg_start.isoformat())
     await state.set_state(EventCreateStates.reg_end)
-    await message.answer("Конец регистрации UTC (YYYY-MM-DD HH:MM):")
+    await message.answer(
+        f"Конец регистрации ({settings.timezone}) (YYYY-MM-DD HH:MM):"
+    )
 
 
 @admin_router.message(EventCreateStates.reg_end)
 async def create_event_reg_end(message: Message, state: FSMContext) -> None:
     try:
-        reg_end = parse_dt(message.text)
+        reg_end = parse_dt(message.text, settings.timezone)
     except ValueError:
         await message.answer("Неверный формат времени.")
         return
     await state.update_data(registration_end_at=reg_end.isoformat())
     await state.set_state(EventCreateStates.start_at)
-    await message.answer("Дата/время события UTC (YYYY-MM-DD HH:MM):")
+    await message.answer(
+        f"Дата/время события ({settings.timezone}) (YYYY-MM-DD HH:MM):"
+    )
 
 
 @admin_router.message(EventCreateStates.start_at)
 async def create_event_start_at(message: Message, state: FSMContext) -> None:
     try:
-        start_at = parse_dt(message.text)
+        start_at = parse_dt(message.text, settings.timezone)
     except ValueError:
         await message.answer("Неверный формат времени.")
         return
@@ -330,7 +336,7 @@ async def publish_event_later(callback: CallbackQuery, state: FSMContext) -> Non
     await state.update_data(publish_event_id=event_id)
     await state.set_state(PublishScheduleStates.publish_at)
     await callback.message.answer(
-        "Введите дату и время публикации в UTC в формате YYYY-MM-DD HH:MM",
+        f"Введите дату и время публикации в {settings.timezone} в формате YYYY-MM-DD HH:MM",
     )
     await callback.answer()
 
@@ -341,9 +347,11 @@ async def publish_event_later_save(message: Message, state: FSMContext) -> None:
         return
 
     try:
-        publish_at = parse_dt(message.text)
+        publish_at = parse_dt(message.text, settings.timezone)
     except ValueError:
-        await message.answer("Неверный формат. Ожидается YYYY-MM-DD HH:MM (UTC).")
+        await message.answer(
+            f"Неверный формат. Ожидается YYYY-MM-DD HH:MM ({settings.timezone})."
+        )
         return
 
     if publish_at <= datetime.now(tz=UTC):
@@ -361,7 +369,10 @@ async def publish_event_later_save(message: Message, state: FSMContext) -> None:
 
     await state.clear()
     await message.answer(
-        f"Публикация для события #{event.id} запланирована на {publish_at:%d.%m.%Y %H:%M} UTC.",
+        (
+            f"Публикация для события #{event.id} запланирована на "
+            f"{publish_at:%d.%m.%Y %H:%M} UTC."
+        ),
     )
 
 

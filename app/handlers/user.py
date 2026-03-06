@@ -19,7 +19,7 @@ from app.services.exceptions import ValidationError
 from app.services.profile_service import ProfileService
 from app.services.registration_service import RegistrationService
 from app.services.schemas import PassportInput, PersonInput, RegistrationInput
-from app.utils.text import render_event_card
+from app.utils.text import format_dt_tz, render_event_card
 
 user_router = Router(name="user")
 
@@ -113,9 +113,20 @@ async def open_event(callback: CallbackQuery) -> None:
         and not existing
     )
     can_cancel = existing is not None
+    if can_cancel:
+        reg_note = "✅ У тебя уже есть активная регистрация."
+    elif now < event.registration_start_at:
+        reg_note = (
+            "⏳ Регистрация еще не открыта.\n"
+            f"Старт: {format_dt_tz(event.registration_start_at)} (Europe/Moscow)."
+        )
+    elif now > event.registration_end_at:
+        reg_note = "🚫 Регистрация уже закрыта."
+    else:
+        reg_note = "🟢 Регистрация открыта."
 
     await callback.message.answer(
-        render_event_card(event),
+        render_event_card(event) + "\n\n" + reg_note,
         reply_markup=event_card_kb(event.id, can_register=can_register, can_cancel=can_cancel),
     )
     await callback.answer()
@@ -145,10 +156,14 @@ async def my_regs(update: Message | CallbackQuery) -> None:
 
     lines = ["🗂 Твои регистрации:"]
     for reg in regs:
-        lines.append(
-            f"#{reg.id} | {reg.event.title} | {reg.status.value}"
-            + (f" | команда: {reg.team_name}" if reg.team_name else "")
+        line = (
+            f"#{reg.id} | {reg.event.title} | {reg.status.value}\n"
+            f"📍 {reg.event.location}\n"
+            f"🗓 {format_dt_tz(reg.event.start_at)} (Europe/Moscow)"
         )
+        if reg.team_name:
+            line += f"\n👥 команда: {reg.team_name}"
+        lines.append(line)
     await send("\n".join(lines))
 
     if isinstance(update, CallbackQuery):
