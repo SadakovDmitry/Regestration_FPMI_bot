@@ -77,15 +77,35 @@ class RegistrationRepository:
         )
         return int(result.scalar_one() or 0)
 
-    async def first_waitlist(self, event_id: int) -> Registration | None:
+    async def occupied_people(self, event_id: int) -> int:
         result = await self.session.execute(
-            select(Registration)
-            .where(
+            select(func.coalesce(func.sum(func.coalesce(Registration.team_size, 1)), 0)).where(
                 Registration.event_id == event_id,
-                Registration.status == RegistrationStatus.waitlist,
+                Registration.status.in_(OCCUPYING_STATUSES),
             )
-            .order_by(Registration.created_at.asc(), Registration.id.asc())
-            .limit(1)
+        )
+        return int(result.scalar_one() or 0)
+
+    async def first_waitlist(
+        self,
+        event_id: int,
+        *,
+        has_team: bool | None = None,
+        max_team_size: int | None = None,
+    ) -> Registration | None:
+        stmt = select(Registration).where(
+            Registration.event_id == event_id,
+            Registration.status == RegistrationStatus.waitlist,
+        )
+        if has_team is True:
+            stmt = stmt.where(Registration.team_name.is_not(None))
+        elif has_team is False:
+            stmt = stmt.where(Registration.team_name.is_(None))
+        if max_team_size is not None:
+            stmt = stmt.where(func.coalesce(Registration.team_size, 1) <= max_team_size)
+
+        result = await self.session.execute(
+            stmt.order_by(Registration.created_at.asc(), Registration.id.asc()).limit(1)
         )
         return result.scalar_one_or_none()
 

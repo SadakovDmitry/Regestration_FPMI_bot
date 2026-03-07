@@ -40,8 +40,19 @@ class RegistrationService:
         await self._validate_user_uniqueness(user_id, event_id)
         self._validate_payload(event, data)
 
-        occupied = await self.repo.occupied_slots(event_id)
-        status = RegistrationStatus.registered if occupied < event.capacity else RegistrationStatus.waitlist
+        occupied = await self._occupied_units(event)
+        requested_slots = self._requested_slots(event, data.team_size)
+        remaining = max(event.capacity - occupied, 0)
+
+        if event.type == EventType.team:
+            threshold = event.team_max_size or 1
+            status = (
+                RegistrationStatus.registered
+                if remaining >= threshold and requested_slots <= remaining
+                else RegistrationStatus.waitlist
+            )
+        else:
+            status = RegistrationStatus.registered if requested_slots <= remaining else RegistrationStatus.waitlist
 
         any_not_mipt = data.captain_or_solo.is_not_mipt or any(p.is_not_mipt for p in data.not_mipt_members)
         registration = Registration(
@@ -49,7 +60,7 @@ class RegistrationService:
             user_id=user_id,
             status=status,
             team_name=data.team_name,
-            team_size=data.team_size,
+            team_size=data.team_size if event.type == EventType.team else None,
             has_not_mipt_members=any_not_mipt,
             pd_consent_at=now if data.pd_consent and any_not_mipt else None,
             pd_consent_version=data.pd_consent_version if data.pd_consent and any_not_mipt else None,
@@ -94,7 +105,11 @@ class RegistrationService:
 
         event = await self._get_event_locked(registration.event_id)
         if event and event.start_at > now:
-            await self.promote_waitlist(registration.event_id, now)
+            await self.promote_waitlist(
+                registration.event_id,
+                now,
+                preferred_category=self._waitlist_category(event, registration),
+            )
 
         return registration
 
@@ -102,6 +117,7 @@ class RegistrationService:
         self,
         event_id: int,
         now: datetime | None = None,
+        preferred_category: str | None = None,
     ) -> list[Registration]:
         now = now or datetime.now(tz=UTC)
         event = await self._get_event_locked(event_id)
@@ -109,17 +125,30 @@ class RegistrationService:
             raise NotFoundError("Event not found")
 
         invited: list[Registration] = []
-        occupied = await self.repo.occupied_slots(event_id)
+        occupied = await self._occupied_units(event)
+        free_slots = max(event.capacity - occupied, 0)
 
-        while occupied < event.capacity:
-            candidate = await self.repo.first_waitlist(event_id)
+        while free_slots > 0:
+            waitlist_has_team: bool | None = None
+            if event.type == EventType.team and preferred_category in {"team", "single"}:
+                waitlist_has_team = preferred_category == "team"
+
+            candidate = await self.repo.first_waitlist(
+                event_id,
+                has_team=waitlist_has_team,
+                max_team_size=free_slots if event.type == EventType.team else None,
+            )
             if not candidate:
+                break
+
+            candidate_slots = self._requested_slots(event, candidate.team_size)
+            if candidate_slots > free_slots:
                 break
             candidate.status = RegistrationStatus.invited_from_waitlist
             candidate.waitlist_invited_at = now
             candidate.waitlist_expires_at = now + WAITLIST_RESPONSE_TIMEOUT
             invited.append(candidate)
-            occupied += 1
+            free_slots -= candidate_slots
 
         return invited
 
@@ -144,7 +173,11 @@ class RegistrationService:
         registration.status = RegistrationStatus.declined
         event = await self._get_event_locked(registration.event_id)
         if event and event.start_at > now:
-            await self.promote_waitlist(registration.event_id, now)
+            await self.promote_waitlist(
+                registration.event_id,
+                now,
+                preferred_category=self._waitlist_category(event, registration),
+            )
         return registration
 
     async def expire_waitlist_invites(self, now: datetime | None = None) -> list[int]:
@@ -153,16 +186,16 @@ class RegistrationService:
         if not due:
             return []
 
-        affected_events: set[int] = set()
         for registration in due:
             registration.status = RegistrationStatus.auto_declined
             registration.waitlist_expires_at = None
-            affected_events.add(registration.event_id)
-
-        for event_id in affected_events:
-            event = await self._get_event_locked(event_id)
+            event = await self._get_event_locked(registration.event_id)
             if event and event.start_at > now:
-                await self.promote_waitlist(event_id, now)
+                await self.promote_waitlist(
+                    registration.event_id,
+                    now,
+                    preferred_category=self._waitlist_category(event, registration),
+                )
 
         return [r.id for r in due]
 
@@ -206,7 +239,11 @@ class RegistrationService:
         registration.status = RegistrationStatus.declined
         event = await self._get_event_locked(registration.event_id)
         if event and event.start_at > now:
-            await self.promote_waitlist(registration.event_id, now)
+            await self.promote_waitlist(
+                registration.event_id,
+                now,
+                preferred_category=self._waitlist_category(event, registration),
+            )
         return registration
 
     async def expire_confirmations(self, now: datetime | None = None) -> list[int]:
@@ -215,16 +252,16 @@ class RegistrationService:
         if not due:
             return []
 
-        affected_events: set[int] = set()
         for registration in due:
             registration.status = RegistrationStatus.auto_declined
             registration.confirmation_expires_at = None
-            affected_events.add(registration.event_id)
-
-        for event_id in affected_events:
-            event = await self._get_event_locked(event_id)
+            event = await self._get_event_locked(registration.event_id)
             if event and event.start_at > now:
-                await self.promote_waitlist(event_id, now)
+                await self.promote_waitlist(
+                    registration.event_id,
+                    now,
+                    preferred_category=self._waitlist_category(event, registration),
+                )
 
         return [r.id for r in due]
 
@@ -262,14 +299,23 @@ class RegistrationService:
                 raise ValidationError("Solo registration cannot include team members")
 
         if event.type == EventType.team:
-            if not data.team_name:
-                raise ValidationError("Team name is required")
-            if data.team_size is None:
-                raise ValidationError("Team size is required")
-            if event.team_min_size and data.team_size < event.team_min_size:
-                raise ValidationError("Team size is below minimum")
-            if event.team_max_size and data.team_size > event.team_max_size:
-                raise ValidationError("Team size exceeds maximum")
+            has_team = data.has_team if data.has_team is not None else bool(data.team_name)
+            if has_team:
+                if not data.team_name:
+                    raise ValidationError("Team name is required")
+                if data.team_size is None:
+                    raise ValidationError("Team size is required")
+                if event.team_min_size and data.team_size < event.team_min_size:
+                    raise ValidationError("Team size is below minimum")
+                if event.team_max_size and data.team_size > event.team_max_size:
+                    raise ValidationError("Team size exceeds maximum")
+            else:
+                if data.team_name:
+                    raise ValidationError("Single participant must not provide team name")
+                if data.team_size not in (None, 1):
+                    raise ValidationError("Single participant size must be 1")
+                if data.not_mipt_members:
+                    raise ValidationError("Single participant without team cannot add extra members")
 
         needs_consent = data.captain_or_solo.is_not_mipt or any(
             member.is_not_mipt for member in data.not_mipt_members
@@ -316,6 +362,23 @@ class RegistrationService:
             user.passport_series = None
             user.passport_number = None
             user.passport_issue_date = None
+
+    async def _occupied_units(self, event: Event) -> int:
+        if event.type == EventType.team:
+            return await self.repo.occupied_people(event.id)
+        return await self.repo.occupied_slots(event.id)
+
+    @staticmethod
+    def _requested_slots(event: Event, team_size: int | None) -> int:
+        if event.type == EventType.team:
+            return max(int(team_size or 1), 1)
+        return 1
+
+    @staticmethod
+    def _waitlist_category(event: Event, registration: Registration) -> str | None:
+        if event.type != EventType.team:
+            return None
+        return "team" if registration.team_name else "single"
 
     async def list_waitlist(self, event_id: int) -> list[Registration]:
         regs = await self.repo.list_by_event(event_id)

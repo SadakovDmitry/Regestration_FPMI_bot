@@ -25,6 +25,7 @@ class PersonInput:
 @dataclass(slots=True)
 class RegistrationInput:
     captain_or_solo: PersonInput
+    has_team: bool | None = None
     team_name: str | None = None
     team_size: int | None = None
     not_mipt_members: list[PersonInput] = field(default_factory=list)

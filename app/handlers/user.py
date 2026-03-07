@@ -78,6 +78,10 @@ async def _continue_captain_flow(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     profile = data.get("profile", {})
     captain = data.get("captain", {})
+    actor_tg_id = int(data.get("actor_tg_id") or message.from_user.id)
+    actor_username = data.get("actor_username")
+    if actor_username is None:
+        actor_username = message.from_user.username
 
     if not captain.get("last_name"):
         saved = profile.get("last_name")
@@ -112,8 +116,8 @@ async def _continue_captain_flow(message: Message, state: FSMContext) -> None:
     if not captain.get("contact"):
         saved_contact = (
             profile.get("contact")
-            or _auto_contact_from_username(message.from_user.username)
-            or f"id:{message.from_user.id}"
+            or _auto_contact_from_username(actor_username)
+            or f"id:{actor_tg_id}"
         )
         captain["contact"] = saved_contact
         await state.update_data(captain=captain)
@@ -435,16 +439,26 @@ async def register_event_start(callback: CallbackQuery, state: FSMContext) -> No
 
     await state.clear()
     await state.update_data(
+        actor_tg_id=callback.from_user.id,
+        actor_username=callback.from_user.username,
         event_id=event.id,
         event_type=event.type.value,
         team_min_size=event.team_min_size,
         team_max_size=event.team_max_size,
         profile=profile,
         captain={},
+        has_team=None,
         not_mipt_members=[],
         pd_consent=False,
     )
-    await _continue_captain_flow(callback.message, state)
+    if event.type.value == "team":
+        await state.set_state(RegistrationStates.team_has_team)
+        await callback.message.answer(
+            "👥 У тебя уже есть команда?",
+            reply_markup=yes_no_kb("team_has_yes", "team_has_no"),
+        )
+    else:
+        await _continue_captain_flow(callback.message, state)
     await callback.answer()
 
 
@@ -582,11 +596,37 @@ async def reg_pd_consent(callback: CallbackQuery, state: FSMContext) -> None:
 async def _after_captain_ready(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     if data["event_type"] == "team":
-        await state.set_state(RegistrationStates.team_name)
-        await message.answer("🏷 Название команды:")
+        has_team = data.get("has_team")
+        if has_team is False:
+            await _finalize_registration(message, state)
+            return
+        if has_team is True:
+            await state.set_state(RegistrationStates.team_name)
+            await message.answer("🏷 Название команды:")
+            return
+        await state.set_state(RegistrationStates.team_has_team)
+        await message.answer(
+            "👥 У тебя уже есть команда?",
+            reply_markup=yes_no_kb("team_has_yes", "team_has_no"),
+        )
         return
 
     await _finalize_registration(message, state)
+
+
+@user_router.callback_query(RegistrationStates.team_has_team, F.data.in_({"team_has_yes", "team_has_no"}))
+async def reg_team_has_team(callback: CallbackQuery, state: FSMContext) -> None:
+    if callback.data == "team_has_yes":
+        await state.update_data(has_team=True)
+    else:
+        await state.update_data(
+            has_team=False,
+            team_name=None,
+            team_size=1,
+            not_mipt_members=[],
+        )
+    await _continue_captain_flow(callback.message, state)
+    await callback.answer()
 
 
 @user_router.message(RegistrationStates.team_name)
@@ -783,6 +823,7 @@ async def passport_issue_date(message: Message, state: FSMContext) -> None:
 
 async def _finalize_registration(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
+    actor_tg_id = int(data.get("actor_tg_id") or message.from_user.id)
 
     captain = data["captain"]
     captain_passport = captain.get("passport")
@@ -825,6 +866,7 @@ async def _finalize_registration(message: Message, state: FSMContext) -> None:
 
     registration_input = RegistrationInput(
         captain_or_solo=captain_input,
+        has_team=data.get("has_team"),
         team_name=data.get("team_name"),
         team_size=data.get("team_size"),
         not_mipt_members=members_input,
@@ -833,7 +875,7 @@ async def _finalize_registration(message: Message, state: FSMContext) -> None:
     )
 
     async with AsyncSessionLocal() as session:
-        user = await UserRepository(session).get_by_tg_id(message.from_user.id)
+        user = await UserRepository(session).get_by_tg_id(actor_tg_id)
         if not user:
             await message.answer("ℹ️ Сначала отправь /start, чтобы активировать профиль.")
             return

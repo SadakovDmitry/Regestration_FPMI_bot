@@ -41,6 +41,7 @@ class RegistrationStates(StatesGroup):
     group_name = State()
     pd_consent = State()
 
+    team_has_team = State()
     team_name = State()
     team_size = State()
     team_has_not_mipt = State()

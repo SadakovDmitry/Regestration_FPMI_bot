@@ -12,7 +12,18 @@ from app.config import get_settings
 from app.db import AsyncSessionLocal
 from app.handlers.states import EventCreateStates, PublishScheduleStates
 from app.keyboards.admin import events_admin_list_kb, export_kind_kb, publish_mode_kb
-from app.keyboards.common import admin_menu_kb
+from app.keyboards.common import (
+    ADMIN_BTN_ADMINS,
+    ADMIN_BTN_CREATE_EVENT,
+    ADMIN_BTN_DELETE_EVENT,
+    ADMIN_BTN_EVENTS_LIST,
+    ADMIN_BTN_EXPORT,
+    ADMIN_BTN_PUBLISH,
+    ADMIN_BTN_REGISTRATIONS,
+    ADMIN_BTN_SETTINGS,
+    ADMIN_BTN_WAITLIST,
+    admin_menu_kb,
+)
 from app.keyboards.events import event_type_kb, yes_no_kb
 from app.models.enums import EventStatus, RegistrationStatus
 from app.repositories.registrations import RegistrationRepository
@@ -30,6 +41,32 @@ settings = get_settings()
 
 def _is_true(value: str) -> bool:
     return value.lower().strip() in {"1", "yes", "y", "да", "true"}
+
+
+def _event_type_label(event_type: str) -> str:
+    return "Командное (team)" if event_type == "team" else "Индивидуальное (solo)"
+
+
+def _event_status_label(status: EventStatus) -> str:
+    labels = {
+        EventStatus.draft: "черновик",
+        EventStatus.published: "опубликовано",
+        EventStatus.archived: "архив",
+    }
+    return labels.get(status, status.value)
+
+
+def _registration_status_label(status: RegistrationStatus) -> str:
+    labels = {
+        RegistrationStatus.registered: "зарегистрирован",
+        RegistrationStatus.waitlist: "в листе ожидания",
+        RegistrationStatus.invited_from_waitlist: "приглашен из листа ожидания",
+        RegistrationStatus.confirmed: "подтвердил участие",
+        RegistrationStatus.declined: "отказ",
+        RegistrationStatus.auto_declined: "автоотказ (таймаут)",
+        RegistrationStatus.cancelled_by_user: "отменено пользователем",
+    }
+    return labels.get(status, status.value)
 
 
 async def _ensure_admin(message: Message) -> bool:
@@ -56,16 +93,19 @@ async def _ensure_admin_cb(callback: CallbackQuery) -> bool:
 async def admin_panel(message: Message) -> None:
     if not await _ensure_admin(message):
         return
-    await message.answer("Админ-панель", reply_markup=admin_menu_kb())
+    await message.answer(
+        "🔧 Панель администратора.\nВыбери действие в меню ниже.",
+        reply_markup=admin_menu_kb(),
+    )
 
 
-@admin_router.message(F.text == "➕ Создать мероприятие")
+@admin_router.message(F.text == ADMIN_BTN_CREATE_EVENT)
 async def create_event_start(message: Message, state: FSMContext) -> None:
     if not await _ensure_admin(message):
         return
     await state.clear()
     await state.set_state(EventCreateStates.type)
-    await message.answer("Тип мероприятия:", reply_markup=event_type_kb())
+    await message.answer("1/9 Выберите тип мероприятия:", reply_markup=event_type_kb())
 
 
 @admin_router.callback_query(EventCreateStates.type, F.data.startswith("event_type:"))
@@ -75,7 +115,7 @@ async def create_event_type(callback: CallbackQuery, state: FSMContext) -> None:
     event_type = callback.data.split(":", maxsplit=1)[1]
     await state.update_data(type=event_type)
     await state.set_state(EventCreateStates.title)
-    await callback.message.answer("Название:")
+    await callback.message.answer("2/9 Введите название мероприятия:")
     await callback.answer()
 
 
@@ -83,7 +123,7 @@ async def create_event_type(callback: CallbackQuery, state: FSMContext) -> None:
 async def create_event_title(message: Message, state: FSMContext) -> None:
     await state.update_data(title=message.text.strip())
     await state.set_state(EventCreateStates.description)
-    await message.answer("Описание (или '-'): ")
+    await message.answer("3/9 Введите описание или отправьте `-`, чтобы пропустить.")
 
 
 @admin_router.message(EventCreateStates.description)
@@ -92,7 +132,8 @@ async def create_event_description(message: Message, state: FSMContext) -> None:
     await state.update_data(description=None if value == "-" else value)
     await state.set_state(EventCreateStates.reg_start)
     await message.answer(
-        f"Старт регистрации ({settings.timezone}) (YYYY-MM-DD HH:MM):"
+        f"4/9 Введите начало регистрации ({settings.timezone})\n"
+        "Формат: YYYY-MM-DD HH:MM"
     )
 
 
@@ -101,12 +142,13 @@ async def create_event_reg_start(message: Message, state: FSMContext) -> None:
     try:
         reg_start = parse_dt(message.text, settings.timezone)
     except ValueError:
-        await message.answer("Неверный формат времени.")
+        await message.answer("Не могу распознать дату/время. Формат: YYYY-MM-DD HH:MM")
         return
     await state.update_data(registration_start_at=reg_start.isoformat())
     await state.set_state(EventCreateStates.reg_end)
     await message.answer(
-        f"Конец регистрации ({settings.timezone}) (YYYY-MM-DD HH:MM):"
+        f"5/9 Введите конец регистрации ({settings.timezone})\n"
+        "Формат: YYYY-MM-DD HH:MM"
     )
 
 
@@ -115,12 +157,13 @@ async def create_event_reg_end(message: Message, state: FSMContext) -> None:
     try:
         reg_end = parse_dt(message.text, settings.timezone)
     except ValueError:
-        await message.answer("Неверный формат времени.")
+        await message.answer("Не могу распознать дату/время. Формат: YYYY-MM-DD HH:MM")
         return
     await state.update_data(registration_end_at=reg_end.isoformat())
     await state.set_state(EventCreateStates.start_at)
     await message.answer(
-        f"Дата/время события ({settings.timezone}) (YYYY-MM-DD HH:MM):"
+        f"6/9 Введите дату и время начала события ({settings.timezone})\n"
+        "Формат: YYYY-MM-DD HH:MM"
     )
 
 
@@ -129,18 +172,22 @@ async def create_event_start_at(message: Message, state: FSMContext) -> None:
     try:
         start_at = parse_dt(message.text, settings.timezone)
     except ValueError:
-        await message.answer("Неверный формат времени.")
+        await message.answer("Не могу распознать дату/время. Формат: YYYY-MM-DD HH:MM")
         return
     await state.update_data(start_at=start_at.isoformat())
     await state.set_state(EventCreateStates.location)
-    await message.answer("Место:")
+    await message.answer("7/9 Укажите место проведения:")
 
 
 @admin_router.message(EventCreateStates.location)
 async def create_event_location(message: Message, state: FSMContext) -> None:
     await state.update_data(location=message.text.strip())
     await state.set_state(EventCreateStates.capacity)
-    await message.answer("Лимит capacity (целое):")
+    data = await state.get_data()
+    if data.get("type") == "team":
+        await message.answer("8/9 Укажите общий лимит участников (человек, целое число):")
+    else:
+        await message.answer("8/9 Укажите лимит участников (целое число):")
 
 
 @admin_router.message(EventCreateStates.capacity)
@@ -148,17 +195,21 @@ async def create_event_capacity(message: Message, state: FSMContext) -> None:
     try:
         capacity = int(message.text.strip())
     except ValueError:
-        await message.answer("Введите целое число")
+        await message.answer("Введите целое число.")
         return
     await state.update_data(capacity=capacity)
 
     data = await state.get_data()
     if data.get("type") == "team":
         await state.set_state(EventCreateStates.team_min)
-        await message.answer("team_min_size:")
+        await message.answer("8.1/9 Минимальный размер команды (целое число):")
     else:
         await state.set_state(EventCreateStates.photo)
-        await message.answer("photo_file_id (или '-'): ")
+        await message.answer(
+            "9/9 Отправьте фото мероприятия сообщением.\n"
+            "Если фото не нужно, отправьте `-`.\n"
+            "Можно также вставить готовый `file_id`."
+        )
 
 
 @admin_router.message(EventCreateStates.team_min)
@@ -166,11 +217,11 @@ async def create_event_team_min(message: Message, state: FSMContext) -> None:
     try:
         team_min = int(message.text.strip())
     except ValueError:
-        await message.answer("Введите целое число")
+        await message.answer("Введите целое число.")
         return
     await state.update_data(team_min_size=team_min)
     await state.set_state(EventCreateStates.team_max)
-    await message.answer("team_max_size:")
+    await message.answer("8.2/9 Максимальный размер команды (целое число):")
 
 
 @admin_router.message(EventCreateStates.team_max)
@@ -178,29 +229,38 @@ async def create_event_team_max(message: Message, state: FSMContext) -> None:
     try:
         team_max = int(message.text.strip())
     except ValueError:
-        await message.answer("Введите целое число")
+        await message.answer("Введите целое число.")
         return
     await state.update_data(team_max_size=team_max)
     await state.set_state(EventCreateStates.photo)
-    await message.answer("photo_file_id (или '-'): ")
+    await message.answer(
+        "9/9 Отправьте фото мероприятия сообщением.\n"
+        "Если фото не нужно, отправьте `-`.\n"
+        "Можно также вставить готовый `file_id`."
+    )
 
 
 async def _send_event_preview(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
+    reg_start = format_dt_tz(datetime.fromisoformat(data["registration_start_at"]))
+    reg_end = format_dt_tz(datetime.fromisoformat(data["registration_end_at"]))
+    start_at = format_dt_tz(datetime.fromisoformat(data["start_at"]))
+
     preview = (
-        f"{data['title']}\n"
-        f"Тип: {data['type']}\n"
-        f"Регистрация: {data['registration_start_at']} - {data['registration_end_at']}\n"
-        f"Старт: {data['start_at']}\n"
-        f"Место: {data['location']}\n"
-        f"capacity: {data['capacity']}"
+        "👀 Предпросмотр мероприятия\n\n"
+        f"🎯 Название: {data['title']}\n"
+        f"🧩 Тип: {_event_type_label(data['type'])}\n"
+        f"📝 Регистрация: {reg_start} — {reg_end}\n"
+        f"🗓 Старт события: {start_at}\n"
+        f"📍 Место: {data['location']}\n"
+        f"👥 Лимит: {data['capacity']} чел."
     )
     if data.get("type") == "team":
-        preview += f"\nКоманда: {data.get('team_min_size')}-{data.get('team_max_size')}"
+        preview += f"\n👨‍👩‍👧‍👦 Размер команды: {data.get('team_min_size')}–{data.get('team_max_size')}"
 
     await state.set_state(EventCreateStates.preview)
     await message.answer(
-        preview + "\n\nСохранить как draft?",
+        preview + "\n\nСохранить это мероприятие как черновик?",
         reply_markup=yes_no_kb("draft_save_yes", "draft_save_no", yes_text="Да", no_text="Нет"),
     )
 
@@ -215,7 +275,7 @@ async def create_event_photo_by_upload(message: Message, state: FSMContext) -> N
 @admin_router.message(EventCreateStates.photo)
 async def create_event_photo(message: Message, state: FSMContext) -> None:
     if not message.text:
-        await message.answer("Отправьте фото, file_id или '-' без фото.")
+        await message.answer("Отправьте фото, `file_id` или `-`, если фото не нужно.")
         return
 
     value = message.text.strip()
@@ -244,14 +304,17 @@ async def _save_event_from_state(message: Message, state: FSMContext) -> None:
         await session.commit()
 
     await state.clear()
-    await message.answer(f"Событие создано в draft: id={event.id}")
+    await message.answer(
+        f"✅ Черновик создан: мероприятие #{event.id}.\n"
+        "Откройте раздел «🚀 Запустить мероприятие», когда будете готовы к публикации."
+    )
 
 
 @admin_router.callback_query(EventCreateStates.preview, F.data.in_({"draft_save_yes", "draft_save_no"}))
 async def create_event_preview_callback(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.data == "draft_save_no":
         await state.clear()
-        await callback.message.answer("Создание отменено.")
+        await callback.message.answer("Создание мероприятия отменено.")
         await callback.answer()
         return
 
@@ -262,12 +325,12 @@ async def create_event_preview_callback(callback: CallbackQuery, state: FSMConte
 @admin_router.message(EventCreateStates.preview)
 async def create_event_preview_message_fallback(message: Message, state: FSMContext) -> None:
     if not _is_true(message.text):
-        await message.answer("Нажми кнопку «Да» или «Нет» ниже.")
+        await message.answer("Пожалуйста, нажмите кнопку «Да» или «Нет» ниже.")
         return
     await _save_event_from_state(message, state)
 
 
-@admin_router.message(F.text == "📋 Список мероприятий")
+@admin_router.message(F.text == ADMIN_BTN_EVENTS_LIST)
 async def admin_events_list(message: Message) -> None:
     if not await _ensure_admin(message):
         return
@@ -276,24 +339,101 @@ async def admin_events_list(message: Message) -> None:
         events = await EventService(session).list_all()
 
     if not events:
-        await message.answer("Событий нет.")
+        await message.answer("Пока нет ни одного мероприятия.")
         return
 
-    lines = [
-        (
-            f"{event.id}. {event.title} | {event.status.value} | {event.start_at:%d.%m.%Y %H:%M}"
-            + (
-                f" | publish_at={event.planned_publish_at:%d.%m.%Y %H:%M}"
-                if event.planned_publish_at
-                else ""
-            )
-        )
-        for event in events
-    ]
+    lines = ["📋 Все мероприятия:"]
+    for event in events:
+        block = [
+            f"#{event.id} • {event.title}",
+            f"Статус: {_event_status_label(event.status)}",
+            f"Дата события: {format_dt_tz(event.start_at)}",
+        ]
+        if event.planned_publish_at:
+            block.append(f"Автозапуск: {format_dt_tz(event.planned_publish_at)}")
+        lines.append("\n".join(block))
+
     await message.answer("\n".join(lines))
 
 
-@admin_router.message(F.text == "📣 Опубликовать в канал")
+@admin_router.message(F.text == ADMIN_BTN_DELETE_EVENT)
+async def delete_event_pick(message: Message) -> None:
+    if not await _ensure_admin(message):
+        return
+
+    async with AsyncSessionLocal() as session:
+        events = await EventService(session).list_all()
+
+    if not events:
+        await message.answer("Пока нет мероприятий для удаления.")
+        return
+
+    await message.answer(
+        "Выберите мероприятие для удаления:",
+        reply_markup=events_admin_list_kb(events, prefix="delete_event"),
+    )
+
+
+@admin_router.callback_query(F.data.startswith("delete_event:"))
+async def delete_event_confirm(callback: CallbackQuery) -> None:
+    if not await _ensure_admin_cb(callback):
+        return
+
+    event_id = int(callback.data.split(":", maxsplit=1)[1])
+    async with AsyncSessionLocal() as session:
+        event = await EventService(session).get(event_id)
+
+    if not event:
+        await callback.message.answer("Мероприятие не найдено.")
+        await callback.answer()
+        return
+
+    await callback.message.answer(
+        (
+            f"⚠️ Удалить мероприятие #{event.id} «{event.title}»?\n"
+            "Будут удалены все связанные регистрации и записи уведомлений."
+        ),
+        reply_markup=yes_no_kb(
+            yes_data=f"delete_event_yes:{event.id}",
+            no_data=f"delete_event_no:{event.id}",
+            yes_text="Да, удалить",
+            no_text="Нет",
+        ),
+    )
+    await callback.answer()
+
+
+@admin_router.callback_query(F.data.startswith("delete_event_no:"))
+async def delete_event_cancel(callback: CallbackQuery) -> None:
+    if not await _ensure_admin_cb(callback):
+        return
+
+    await callback.message.answer("Удаление отменено.")
+    await callback.answer()
+
+
+@admin_router.callback_query(F.data.startswith("delete_event_yes:"))
+async def delete_event_apply(callback: CallbackQuery) -> None:
+    if not await _ensure_admin_cb(callback):
+        return
+
+    event_id = int(callback.data.split(":", maxsplit=1)[1])
+    async with AsyncSessionLocal() as session:
+        service = EventService(session)
+        event = await service.get(event_id)
+        if not event:
+            await callback.message.answer("Мероприятие не найдено или уже удалено.")
+            await callback.answer()
+            return
+        title = event.title
+        await service.delete(event_id)
+        await session.commit()
+
+    await callback.message.answer(f"🗑️ Мероприятие #{event_id} «{title}» удалено.")
+    await callback.answer()
+
+
+@admin_router.message(F.text == ADMIN_BTN_PUBLISH)
 async def publish_pick_event(message: Message) -> None:
     if not await _ensure_admin(message):
         return
@@ -303,11 +443,11 @@ async def publish_pick_event(message: Message) -> None:
 
     draft_events = [event for event in events if event.status == EventStatus.draft]
     if not draft_events:
-        await message.answer("Нет draft-событий.")
+        await message.answer("Нет черновиков для запуска. Сначала создайте мероприятие.")
         return
 
     await message.answer(
-        "Выберите событие для публикации:",
+        "Выберите черновик, который нужно запустить:",
         reply_markup=events_admin_list_kb(draft_events, prefix="publish_event"),
     )
 
@@ -319,7 +459,7 @@ async def publish_event_pick_mode(callback: CallbackQuery) -> None:
 
     event_id = int(callback.data.split(":", maxsplit=1)[1])
     await callback.message.answer(
-        "Выберите режим публикации:",
+        "Как запустить мероприятие?",
         reply_markup=publish_mode_kb(event_id),
     )
     await callback.answer()
@@ -337,10 +477,11 @@ async def publish_event_now(callback: CallbackQuery, bot: Bot) -> None:
 
     if outcome.published_now:
         await callback.message.answer(
-            f"Событие опубликовано. Уведомлений отправлено: {outcome.notifications_sent}"
+            "✅ Мероприятие запущено.\n"
+            f"Личных уведомлений отправлено: {outcome.notifications_sent}."
         )
     else:
-        await callback.message.answer("Событие уже опубликовано ранее.")
+        await callback.message.answer("Это мероприятие уже было запущено ранее.")
     await callback.answer()
 
 
@@ -354,7 +495,8 @@ async def publish_event_later(callback: CallbackQuery, state: FSMContext) -> Non
     await state.update_data(publish_event_id=event_id)
     await state.set_state(PublishScheduleStates.publish_at)
     await callback.message.answer(
-        f"Введите дату и время публикации в {settings.timezone} в формате YYYY-MM-DD HH:MM",
+        f"Введите дату и время запуска в {settings.timezone}\n"
+        "Формат: YYYY-MM-DD HH:MM",
     )
     await callback.answer()
 
@@ -368,12 +510,12 @@ async def publish_event_later_save(message: Message, state: FSMContext) -> None:
         publish_at = parse_dt(message.text, settings.timezone)
     except ValueError:
         await message.answer(
-            f"Неверный формат. Ожидается YYYY-MM-DD HH:MM ({settings.timezone})."
+            f"Не могу распознать дату/время. Формат: YYYY-MM-DD HH:MM ({settings.timezone})."
         )
         return
 
     if publish_at <= datetime.now(tz=UTC):
-        await message.answer("Время публикации должно быть в будущем.")
+        await message.answer("Дата запуска должна быть в будущем.")
         return
 
     data = await state.get_data()
@@ -387,14 +529,11 @@ async def publish_event_later_save(message: Message, state: FSMContext) -> None:
 
     await state.clear()
     await message.answer(
-        (
-            f"Публикация для события #{event.id} запланирована на "
-            f"{publish_at:%d.%m.%Y %H:%M} UTC."
-        ),
+        f"✅ Запуск события #{event.id} запланирован на {format_dt_tz(publish_at)}.",
     )
 
 
-@admin_router.message(F.text == "🧾 Регистрации по мероприятию")
+@admin_router.message(F.text == ADMIN_BTN_REGISTRATIONS)
 async def admin_regs_pick(message: Message) -> None:
     if not await _ensure_admin(message):
         return
@@ -402,11 +541,11 @@ async def admin_regs_pick(message: Message) -> None:
     async with AsyncSessionLocal() as session:
         events = await EventService(session).list_all()
     if not events:
-        await message.answer("Событий нет")
+        await message.answer("Пока нет мероприятий.")
         return
 
     await message.answer(
-        "Выберите событие:",
+        "Выберите мероприятие, чтобы посмотреть заявки:",
         reply_markup=events_admin_list_kb(events, prefix="admin_regs"),
     )
 
@@ -422,7 +561,7 @@ async def admin_regs_show(callback: CallbackQuery) -> None:
         regs = await RegistrationRepository(session).list_by_event(event_id)
 
     if not regs:
-        await callback.message.answer("Регистраций пока нет.")
+        await callback.message.answer("На это мероприятие пока нет заявок.")
         await callback.answer()
         return
 
@@ -443,7 +582,8 @@ async def admin_regs_show(callback: CallbackQuery) -> None:
     header += f"👥 Всего: {len(regs)}"
     if status_counts:
         header += " | " + ", ".join(
-            f"{status}={count}" for status, count in sorted(status_counts.items())
+            f"{_registration_status_label(RegistrationStatus(status))}: {count}"
+            for status, count in sorted(status_counts.items())
         )
 
     blocks: list[str] = []
@@ -457,7 +597,7 @@ async def admin_regs_show(callback: CallbackQuery) -> None:
         blocks.append(
             "\n".join(
                 [
-                    f"#{reg.id} | {reg.status.value}",
+                    f"#{reg.id} | {_registration_status_label(reg.status)}",
                     f"👤 {who}",
                     f"👥 Команда: {team} (размер: {team_size})",
                     f"{mipt_flag}",
@@ -468,13 +608,13 @@ async def admin_regs_show(callback: CallbackQuery) -> None:
 
     tail = ""
     if len(regs) > 50:
-        tail = f"\n\nПоказаны первые 50 из {len(regs)}."
+        tail = f"\n\nПоказаны первые 50 заявок из {len(regs)}."
 
     await callback.message.answer(header + "\n\n" + "\n\n".join(blocks) + tail)
     await callback.answer()
 
 
-@admin_router.message(F.text == "🕒 Очередь ожидания")
+@admin_router.message(F.text == ADMIN_BTN_WAITLIST)
 async def admin_waitlist_pick(message: Message) -> None:
     if not await _ensure_admin(message):
         return
@@ -483,11 +623,11 @@ async def admin_waitlist_pick(message: Message) -> None:
         events = await EventService(session).list_all()
 
     if not events:
-        await message.answer("Событий нет")
+        await message.answer("Пока нет мероприятий.")
         return
 
     await message.answer(
-        "Выберите событие:",
+        "Выберите мероприятие, чтобы посмотреть лист ожидания:",
         reply_markup=events_admin_list_kb(events, prefix="admin_waitlist"),
     )
 
@@ -503,18 +643,20 @@ async def admin_waitlist_show(callback: CallbackQuery) -> None:
 
     waitlist = [r for r in regs if r.status == RegistrationStatus.waitlist]
     if not waitlist:
-        await callback.message.answer("Очередь ожидания пуста.")
+        await callback.message.answer("Лист ожидания по этому мероприятию пуст.")
         await callback.answer()
         return
 
-    lines = ["Очередь ожидания (FIFO):"]
+    lines = [f"⏳ Лист ожидания (FIFO), событие #{event_id}:"]
     for idx, reg in enumerate(waitlist, start=1):
-        lines.append(f"{idx}. reg#{reg.id} user={reg.user_id} created={reg.created_at:%d.%m %H:%M}")
+        lines.append(
+            f"{idx}. заявка #{reg.id} | user_id={reg.user_id} | {format_dt_tz(reg.created_at)}"
+        )
     await callback.message.answer("\n".join(lines))
     await callback.answer()
 
 
-@admin_router.message(F.text == "📤 Экспорт CSV/Excel")
+@admin_router.message(F.text == ADMIN_BTN_EXPORT)
 async def admin_export_pick(message: Message) -> None:
     if not await _ensure_admin(message):
         return
@@ -523,10 +665,13 @@ async def admin_export_pick(message: Message) -> None:
         events = await EventService(session).list_all()
 
     if not events:
-        await message.answer("Событий нет")
+        await message.answer("Пока нет мероприятий для выгрузки.")
         return
 
-    await message.answer("Выберите событие:", reply_markup=events_admin_list_kb(events, prefix="admin_export"))
+    await message.answer(
+        "Выберите мероприятие для выгрузки:",
+        reply_markup=events_admin_list_kb(events, prefix="admin_export"),
+    )
 
 
 @admin_router.callback_query(F.data.startswith("admin_export:"))
@@ -535,7 +680,10 @@ async def admin_export_show(callback: CallbackQuery) -> None:
         return
 
     event_id = int(callback.data.split(":", maxsplit=1)[1])
-    await callback.message.answer("Выберите формат выгрузки:", reply_markup=export_kind_kb(event_id))
+    await callback.message.answer(
+        "Выберите вариант выгрузки:",
+        reply_markup=export_kind_kb(event_id),
+    )
     await callback.answer()
 
 
@@ -571,20 +719,20 @@ async def export_data(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-@admin_router.message(F.text == "⚙️ Настройки")
+@admin_router.message(F.text == ADMIN_BTN_SETTINGS)
 async def settings_info(message: Message) -> None:
     if not await _ensure_admin(message):
         return
 
     await message.answer(
-        "Текущие настройки:\n"
-        f"timezone={settings.timezone}\n"
-        f"channel_id={settings.channel_id}\n"
-        "Шаблоны сообщений редактируются в коде/services."
+        "⚙️ Текущие настройки:\n"
+        f"• Часовой пояс: {settings.timezone}\n"
+        f"• CHANNEL_ID: {settings.channel_id}\n"
+        "• Тексты уведомлений меняются в коде (`app/services`)."
     )
 
 
-@admin_router.message(F.text == "👮 Админы")
+@admin_router.message(F.text == ADMIN_BTN_ADMINS)
 async def admins_info(message: Message) -> None:
     if not await _ensure_admin(message):
         return
@@ -592,10 +740,10 @@ async def admins_info(message: Message) -> None:
     async with AsyncSessionLocal() as session:
         admins = await AdminService(session).repo.list_admins()
 
-    lines = ["Админы из БД:"]
+    lines = ["👮 Администраторы:"]
     lines.extend(str(item.tg_id) for item in admins)
-    lines.append(f"ADMIN_IDS env: {settings.admin_ids}")
-    lines.append("Команды: /add_admin <tg_id>, /remove_admin <tg_id>")
+    lines.append(f"ADMIN_IDS из .env: {settings.admin_ids}")
+    lines.append("Команды: /add_admin <tg_id> и /remove_admin <tg_id>")
     await message.answer("\n".join(lines))
 
 
@@ -606,19 +754,19 @@ async def add_admin(message: Message) -> None:
 
     parts = message.text.split()
     if len(parts) != 2:
-        await message.answer("Использование: /add_admin <tg_id>")
+        await message.answer("Формат команды: /add_admin <tg_id>")
         return
 
     async with AsyncSessionLocal() as session:
         admin_service = AdminService(session)
         if not await admin_service.is_super_admin(message.from_user.id):
-            await message.answer("Добавлять админов может только super-admin")
+            await message.answer("Добавлять админов может только super-admin.")
             return
 
         await admin_service.add_admin(int(parts[1]), message.from_user.id)
         await session.commit()
 
-    await message.answer("Админ добавлен.")
+    await message.answer("✅ Администратор добавлен.")
 
 
 @admin_router.message(Command("remove_admin"))
@@ -628,19 +776,21 @@ async def remove_admin(message: Message) -> None:
 
     parts = message.text.split()
     if len(parts) != 2:
-        await message.answer("Использование: /remove_admin <tg_id>")
+        await message.answer("Формат команды: /remove_admin <tg_id>")
         return
 
     async with AsyncSessionLocal() as session:
         admin_service = AdminService(session)
         if not await admin_service.is_super_admin(message.from_user.id):
-            await message.answer("Удалять админов может только super-admin")
+            await message.answer("Удалять админов может только super-admin.")
             return
 
         removed = await admin_service.remove_admin(int(parts[1]))
         await session.commit()
 
-    await message.answer("Удалено." if removed else "Админ не найден или это super-admin.")
+    await message.answer(
+        "✅ Администратор удален." if removed else "Админ не найден или это super-admin."
+    )
 
 
 @admin_router.message(Command("health"))
@@ -650,7 +800,7 @@ async def healthcheck(message: Message) -> None:
 
     async with AsyncSessionLocal() as session:
         await session.execute(text("SELECT 1"))
-    await message.answer("OK")
+    await message.answer("✅ Healthcheck: DB доступна, бот работает.")
 
 
 @admin_router.message(Command("rebuild_scheduler"))
@@ -658,8 +808,8 @@ async def rebuild_scheduler(message: Message) -> None:
     if not await _ensure_admin(message):
         return
     await message.answer(
-        "Планировщик Celery beat работает периодически и сам подхватывает события. "
-        "Команда принята: отдельная перепланировка не требуется."
+        "Планировщик Celery Beat подхватывает события автоматически.\n"
+        "Ручная пересборка сейчас не требуется."
     )
 
 
@@ -668,7 +818,8 @@ async def reschedule_event(message: Message) -> None:
     if not await _ensure_admin(message):
         return
     await message.answer(
-        "Beat использует динамический подбор событий по времени, поэтому ручная перепланировка не нужна."
+        "Планировщик использует динамический подбор по времени.\n"
+        "Ручная перепланировка события не нужна."
     )
 
 
@@ -677,6 +828,6 @@ async def backup_info(message: Message) -> None:
     if not await _ensure_admin(message):
         return
     await message.answer(
-        "Бэкап БД: используйте команду из README\n"
-        "docker compose exec db pg_dump -U postgres hb_bot > backup.sql"
+        "📦 Бэкап БД можно сделать так:\n"
+        "`docker compose exec db pg_dump -U postgres hb_bot > backup.sql`"
     )

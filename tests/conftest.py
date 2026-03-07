@@ -34,9 +34,13 @@ async def create_event(
     *,
     event_type: EventType = EventType.solo,
     capacity: int = 1,
+    team_min_size: int | None = None,
+    team_max_size: int | None = None,
     now: datetime | None = None,
 ) -> Event:
     now = now or datetime.now(tz=UTC)
+    resolved_team_min = team_min_size if team_min_size is not None else (2 if event_type == EventType.team else None)
+    resolved_team_max = team_max_size if team_max_size is not None else (5 if event_type == EventType.team else None)
     event = Event(
         type=event_type,
         status=EventStatus.published,
@@ -47,8 +51,8 @@ async def create_event(
         registration_end_at=now + timedelta(days=1),
         start_at=now + timedelta(days=2),
         capacity=capacity,
-        team_min_size=2 if event_type == EventType.team else None,
-        team_max_size=5 if event_type == EventType.team else None,
+        team_min_size=resolved_team_min,
+        team_max_size=resolved_team_max,
     )
     session.add(event)
     await session.flush()

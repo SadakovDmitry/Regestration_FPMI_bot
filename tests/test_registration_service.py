@@ -127,3 +127,131 @@ async def test_cancel_releases_slot(session):
 
     assert reg1.status == RegistrationStatus.cancelled_by_user
     assert reg2.status == RegistrationStatus.invited_from_waitlist
+
+
+@pytest.mark.asyncio
+async def test_team_waitlist_threshold_by_max_team_size(session):
+    now = datetime.now(tz=UTC)
+    event = await create_event(
+        session,
+        event_type=EventType.team,
+        capacity=10,
+        team_min_size=2,
+        team_max_size=6,
+        now=now,
+    )
+    user1 = await create_user(session, tg_id=801)
+    user2 = await create_user(session, tg_id=802)
+    user3 = await create_user(session, tg_id=803)
+
+    service = RegistrationService(session)
+    reg_team = await service.create_registration(
+        user1.id,
+        event.id,
+        RegistrationInput(
+            captain_or_solo=mipt_person("@u801"),
+            has_team=True,
+            team_name="TeamA",
+            team_size=4,
+        ),
+        now=now,
+    )
+    reg_single = await service.create_registration(
+        user2.id,
+        event.id,
+        RegistrationInput(
+            captain_or_solo=mipt_person("@u802"),
+            has_team=False,
+            team_name=None,
+            team_size=1,
+        ),
+        now=now,
+    )
+    reg_after_threshold = await service.create_registration(
+        user3.id,
+        event.id,
+        RegistrationInput(
+            captain_or_solo=mipt_person("@u803"),
+            has_team=False,
+            team_name=None,
+            team_size=1,
+        ),
+        now=now,
+    )
+
+    assert reg_team.status == RegistrationStatus.registered
+    assert reg_single.status == RegistrationStatus.registered
+    assert reg_after_threshold.status == RegistrationStatus.waitlist
+
+
+@pytest.mark.asyncio
+async def test_team_waitlist_promotes_same_category(session):
+    now = datetime.now(tz=UTC)
+    event = await create_event(
+        session,
+        event_type=EventType.team,
+        capacity=12,
+        team_min_size=2,
+        team_max_size=6,
+        now=now,
+    )
+    user_team_active = await create_user(session, tg_id=811)
+    user_single_active = await create_user(session, tg_id=812)
+    user_team_waitlist = await create_user(session, tg_id=813)
+    user_single_waitlist = await create_user(session, tg_id=814)
+
+    service = RegistrationService(session)
+    reg_team_active = await service.create_registration(
+        user_team_active.id,
+        event.id,
+        RegistrationInput(
+            captain_or_solo=mipt_person("@u811"),
+            has_team=True,
+            team_name="TeamActive",
+            team_size=6,
+        ),
+        now=now,
+    )
+    reg_single_active = await service.create_registration(
+        user_single_active.id,
+        event.id,
+        RegistrationInput(
+            captain_or_solo=mipt_person("@u812"),
+            has_team=False,
+            team_name=None,
+            team_size=1,
+        ),
+        now=now,
+    )
+    reg_team_waitlist = await service.create_registration(
+        user_team_waitlist.id,
+        event.id,
+        RegistrationInput(
+            captain_or_solo=mipt_person("@u813"),
+            has_team=True,
+            team_name="TeamWait",
+            team_size=6,
+        ),
+        now=now,
+    )
+    reg_single_waitlist = await service.create_registration(
+        user_single_waitlist.id,
+        event.id,
+        RegistrationInput(
+            captain_or_solo=mipt_person("@u814"),
+            has_team=False,
+            team_name=None,
+            team_size=1,
+        ),
+        now=now,
+    )
+
+    assert reg_team_waitlist.status == RegistrationStatus.waitlist
+    assert reg_single_waitlist.status == RegistrationStatus.waitlist
+
+    await service.cancel_registration(user_single_active.id, reg_single_active.id, now=now)
+    assert reg_single_waitlist.status == RegistrationStatus.invited_from_waitlist
+    assert reg_team_waitlist.status == RegistrationStatus.waitlist
+
+    await service.cancel_registration(user_team_active.id, reg_team_active.id, now=now)
+    assert reg_team_waitlist.status == RegistrationStatus.invited_from_waitlist

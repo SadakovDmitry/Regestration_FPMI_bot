@@ -13,7 +13,7 @@ from tests.conftest import create_event, create_user, not_mipt_person
 @pytest.mark.asyncio
 async def test_team_flow_smoke(session):
     now = datetime.now(tz=UTC)
-    event = await create_event(session, event_type=EventType.team, capacity=1, now=now)
+    event = await create_event(session, event_type=EventType.team, capacity=5, now=now)
     user = await create_user(session, tg_id=700)
 
     service = RegistrationService(session)

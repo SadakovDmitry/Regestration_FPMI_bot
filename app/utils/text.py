@@ -22,7 +22,7 @@ def render_event_card(event: Event) -> str:
 
     limits = f"Лимит: {event.capacity}"
     if event.type.value == "team":
-        limits += f" команд (размер {event.team_min_size}-{event.team_max_size})"
+        limits += f" чел. (размер команды {event.team_min_size}-{event.team_max_size})"
 
     return (
         f"🎯 {event.title}\n\n"

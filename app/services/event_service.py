@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Event
@@ -66,6 +66,11 @@ class EventService:
             raise NotFoundError("Event not found")
         event.status = EventStatus.archived
         return event
+
+    async def delete(self, event_id: int) -> None:
+        result = await self.session.execute(delete(Event).where(Event.id == event_id))
+        if not result.rowcount:
+            raise NotFoundError("Event not found")
 
     async def schedule_publish(self, event_id: int, publish_at: datetime) -> Event:
         result = await self.session.execute(

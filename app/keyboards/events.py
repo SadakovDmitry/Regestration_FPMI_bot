@@ -62,8 +62,8 @@ def event_type_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text=EventType.solo.value, callback_data="event_type:solo"),
-                InlineKeyboardButton(text=EventType.team.value, callback_data="event_type:team"),
+                InlineKeyboardButton(text="Solo (1 участник)", callback_data="event_type:solo"),
+                InlineKeyboardButton(text="Team (команды)", callback_data="event_type:team"),
             ]
         ]
     )
