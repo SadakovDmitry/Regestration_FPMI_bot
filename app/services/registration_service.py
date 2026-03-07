@@ -39,6 +39,12 @@ class RegistrationService:
         self._validate_event_window(event, now)
         await self._validate_user_uniqueness(user_id, event_id)
         self._validate_payload(event, data)
+        await self._validate_not_mipt_deadline(
+            user_id=user_id,
+            event=event,
+            data=data,
+            now=now,
+        )
 
         occupied = await self._occupied_units(event)
         requested_slots = self._requested_slots(event, data.team_size)
@@ -327,6 +333,27 @@ class RegistrationService:
             if person.is_not_mipt and person.passport is None:
                 raise ValidationError("Passport data is required for not_mipt person")
 
+    async def _validate_not_mipt_deadline(
+        self,
+        user_id: int,
+        event: Event,
+        data: RegistrationInput,
+        now: datetime,
+    ) -> None:
+        user_is_not_mipt = await self._user_is_not_mipt(user_id)
+        payload_has_not_mipt = data.captain_or_solo.is_not_mipt or any(
+            person.is_not_mipt for person in data.not_mipt_members
+        )
+        requires_early_cutoff = user_is_not_mipt or payload_has_not_mipt
+        if not requires_early_cutoff:
+            return
+
+        not_mipt_deadline = event.start_at - timedelta(days=3)
+        if now > not_mipt_deadline:
+            raise ValidationError(
+                "Для участников не с Физтеха регистрация закрывается за 3 дня до начала мероприятия."
+            )
+
     @staticmethod
     def _make_person(role: PersonRole, person: PersonInput) -> RegistrationPerson:
         passport = person.passport
@@ -362,6 +389,11 @@ class RegistrationService:
             user.passport_series = None
             user.passport_number = None
             user.passport_issue_date = None
+
+    async def _user_is_not_mipt(self, user_id: int) -> bool:
+        result = await self.session.execute(select(User.is_not_mipt).where(User.id == user_id))
+        value = result.scalar_one_or_none()
+        return bool(value)
 
     async def _occupied_units(self, event: Event) -> int:
         if event.type == EventType.team:

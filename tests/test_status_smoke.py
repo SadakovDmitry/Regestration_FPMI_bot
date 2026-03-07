@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -14,6 +14,7 @@ from tests.conftest import create_event, create_user, not_mipt_person
 async def test_team_flow_smoke(session):
     now = datetime.now(tz=UTC)
     event = await create_event(session, event_type=EventType.team, capacity=5, now=now)
+    event.start_at = now + timedelta(days=5)
     user = await create_user(session, tg_id=700)
 
     service = RegistrationService(session)

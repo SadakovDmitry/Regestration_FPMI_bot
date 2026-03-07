@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.models import Event, Registration, User
 from app.models.enums import DeliveryKind, RegistrationStatus
 from app.repositories.deliveries import DeliveryRepository
-from app.utils.text import format_dt_tz
+from app.utils.text import NOT_MIPT_REG_NOTE, format_dt_tz
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,8 @@ class NotificationService:
             text=(
                 f"🎉 Новое мероприятие: {event.title}\n"
                 f"🗓 Когда: {format_dt_tz(event.start_at)}\n"
-                "Жми «Открыть мероприятие», чтобы посмотреть детали и зарегистрироваться."
+                "Жми «Открыть мероприятие», чтобы посмотреть детали и зарегистрироваться.\n\n"
+                f"{NOT_MIPT_REG_NOTE}"
             ),
             markup=self._event_cta(event.id),
         )
@@ -48,7 +49,8 @@ class NotificationService:
             kind=DeliveryKind.registration_started,
             text=(
                 f"🚀 Регистрация на «{event.title}» уже открыта!\n"
-                f"Успей до {format_dt_tz(event.registration_end_at)}."
+                f"Успей до {format_dt_tz(event.registration_end_at)}.\n\n"
+                f"{NOT_MIPT_REG_NOTE}"
             ),
             markup=self._event_cta(event.id),
         )
@@ -59,7 +61,8 @@ class NotificationService:
             kind=DeliveryKind.registration_ends_soon,
             text=(
                 f"⏳ До конца регистрации на «{event.title}» остался 1 час.\n"
-                "Если планируешь участвовать, лучше зарегистрироваться сейчас."
+                "Если планируешь участвовать, лучше зарегистрироваться сейчас.\n\n"
+                f"{NOT_MIPT_REG_NOTE}"
             ),
             markup=self._event_cta(event.id),
         )

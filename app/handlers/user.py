@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.filters import CommandStart
@@ -20,7 +20,7 @@ from app.services.exceptions import ValidationError
 from app.services.profile_service import ProfileService
 from app.services.registration_service import RegistrationService
 from app.services.schemas import PassportInput, PersonInput, RegistrationInput
-from app.utils.text import format_dt_tz, render_event_card
+from app.utils.text import NOT_MIPT_REG_NOTE, format_dt_tz, render_event_card
 
 user_router = Router(name="user")
 
@@ -31,7 +31,8 @@ HELP_TEXT = (
     "• регистрирую и снимаю с регистрации\n"
     "• веду лист ожидания\n"
     "• храню профиль для автозаполнения\n\n"
-    "💡 Важно: отменить регистрацию можно в любое время."
+    "💡 Важно: отменить регистрацию можно в любое время.\n"
+    f"\n{NOT_MIPT_REG_NOTE}"
 )
 
 PD_CONSENT_TEXT = (
@@ -225,14 +226,21 @@ async def open_event(callback: CallbackQuery) -> None:
         )
 
     now = datetime.now(tz=UTC)
+    not_mipt_cutoff_passed = bool(user.is_not_mipt) and now > event.start_at - timedelta(days=3)
     can_register = (
         event.registration_start_at <= now <= event.registration_end_at
         and event.status.value == "published"
         and not existing
+        and not not_mipt_cutoff_passed
     )
     can_cancel = existing is not None
     if can_cancel:
         reg_note = "✅ У тебя уже есть активная регистрация."
+    elif not_mipt_cutoff_passed:
+        reg_note = (
+            "⛔ Для участников не с Физтеха регистрация закрыта.\n"
+            "До начала мероприятия осталось меньше 3 дней."
+        )
     elif now < event.registration_start_at:
         reg_note = (
             "⏳ Регистрация еще не открыта.\n"
@@ -424,6 +432,12 @@ async def register_event_start(callback: CallbackQuery, state: FSMContext) -> No
         if existing:
             await callback.answer("ℹ️ У тебя уже есть активная регистрация", show_alert=True)
             return
+        if user.is_not_mipt and datetime.now(tz=UTC) > event.start_at - timedelta(days=3):
+            await callback.answer(
+                "⛔ Для участников не с Физтеха регистрация закрывается за 3 дня до старта.",
+                show_alert=True,
+            )
+            return
 
         profile = {
             "last_name": user.last_name,
@@ -454,7 +468,7 @@ async def register_event_start(callback: CallbackQuery, state: FSMContext) -> No
     if event.type.value == "team":
         await state.set_state(RegistrationStates.team_has_team)
         await callback.message.answer(
-            "👥 У тебя уже есть команда?",
+            "👥 У тебя уже есть команда?\n\n" + NOT_MIPT_REG_NOTE,
             reply_markup=yes_no_kb("team_has_yes", "team_has_no"),
         )
     else:
@@ -531,6 +545,17 @@ async def reg_group_choice(callback: CallbackQuery, state: FSMContext) -> None:
             await state.set_state(RegistrationStates.group_name)
             await callback.message.answer("🏫 Группа (например, Б01-...):")
     else:
+        event_id = int(data["event_id"])
+        async with AsyncSessionLocal() as session:
+            event = await EventRepository(session).get(event_id)
+        if event and datetime.now(tz=UTC) > event.start_at - timedelta(days=3):
+            await callback.message.answer(
+                "⛔ Регистрация участников не с Физтеха закрыта: до начала мероприятия осталось меньше 3 дней."
+            )
+            await state.clear()
+            await callback.answer()
+            return
+
         captain["is_not_mipt"] = True
         captain["group_name"] = None
         saved_profile = data.get("profile", {})
@@ -672,8 +697,22 @@ async def reg_team_not_mipt(callback: CallbackQuery, state: FSMContext) -> None:
     if callback.data == "team_not_mipt_no":
         await _finalize_registration(callback.message, state)
     else:
+        data = await state.get_data()
+        event_id = int(data["event_id"])
+        async with AsyncSessionLocal() as session:
+            event = await EventRepository(session).get(event_id)
+        if event and datetime.now(tz=UTC) > event.start_at - timedelta(days=3):
+            await callback.message.answer(
+                "⛔ Добавить участников не с Физтеха нельзя: до начала мероприятия осталось меньше 3 дней."
+            )
+            await state.clear()
+            await callback.answer()
+            return
+
         await state.set_state(RegistrationStates.not_mipt_count)
-        await callback.message.answer("🔢 Сколько участников не с Физтеха? (целое число)")
+        await callback.message.answer(
+            "🔢 Сколько участников не с Физтеха? (целое число)\n\n" + NOT_MIPT_REG_NOTE
+        )
     await callback.answer()
 
 

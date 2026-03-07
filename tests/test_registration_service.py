@@ -5,9 +5,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.models.enums import EventType, RegistrationStatus
+from app.services.exceptions import ValidationError
 from app.services.registration_service import RegistrationService
 from app.services.schemas import RegistrationInput
-from tests.conftest import create_event, create_user, mipt_person
+from tests.conftest import create_event, create_user, mipt_person, not_mipt_person
 
 
 @pytest.mark.asyncio
@@ -255,3 +256,41 @@ async def test_team_waitlist_promotes_same_category(session):
 
     await service.cancel_registration(user_team_active.id, reg_team_active.id, now=now)
     assert reg_team_waitlist.status == RegistrationStatus.invited_from_waitlist
+
+
+@pytest.mark.asyncio
+async def test_not_mipt_registration_blocked_if_less_than_3_days_left(session):
+    now = datetime.now(tz=UTC)
+    event = await create_event(session, event_type=EventType.solo, capacity=10, now=now)
+    user = await create_user(session, tg_id=901)
+
+    service = RegistrationService(session)
+    with pytest.raises(ValidationError):
+        await service.create_registration(
+            user.id,
+            event.id,
+            RegistrationInput(
+                captain_or_solo=not_mipt_person("@u901"),
+                pd_consent=True,
+                pd_consent_version="v1",
+            ),
+            now=now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_profile_not_mipt_blocked_if_less_than_3_days_left(session):
+    now = datetime.now(tz=UTC)
+    event = await create_event(session, event_type=EventType.solo, capacity=10, now=now)
+    user = await create_user(session, tg_id=902)
+    user.is_not_mipt = True
+    await session.flush()
+
+    service = RegistrationService(session)
+    with pytest.raises(ValidationError):
+        await service.create_registration(
+            user.id,
+            event.id,
+            RegistrationInput(captain_or_solo=mipt_person("@u902")),
+            now=now,
+        )

@@ -6,6 +6,11 @@ from zoneinfo import ZoneInfo
 from app.config import get_settings
 from app.models import Event
 
+NOT_MIPT_REG_NOTE = (
+    "ℹ️ Для участников не с Физтеха регистрация доступна "
+    "не позже чем за 3 дня до начала мероприятия."
+)
+
 
 def format_dt_tz(dt: datetime) -> str:
     settings = get_settings()
@@ -30,5 +35,6 @@ def render_event_card(event: Event) -> str:
         f"📍 Место: {event.location}\n"
         f"📝 Регистрация: {reg_start_local:%d.%m %H:%M}"
         f" — {reg_end_local:%d.%m %H:%M}\n"
-        f"👥 {limits}"
+        f"👥 {limits}\n\n"
+        f"{NOT_MIPT_REG_NOTE}"
     )

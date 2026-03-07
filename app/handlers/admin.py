@@ -33,7 +33,7 @@ from app.services.export_service import ExportService
 from app.services.publication_service import PublicationService
 from app.services.schemas import EventCreateInput
 from app.utils.datetime import parse_dt
-from app.utils.text import format_dt_tz
+from app.utils.text import NOT_MIPT_REG_NOTE, format_dt_tz
 
 admin_router = Router(name="admin")
 settings = get_settings()
@@ -257,6 +257,7 @@ async def _send_event_preview(message: Message, state: FSMContext) -> None:
     )
     if data.get("type") == "team":
         preview += f"\n👨‍👩‍👧‍👦 Размер команды: {data.get('team_min_size')}–{data.get('team_max_size')}"
+    preview += f"\n\n{NOT_MIPT_REG_NOTE}"
 
     await state.set_state(EventCreateStates.preview)
     await message.answer(
