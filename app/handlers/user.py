@@ -42,6 +42,16 @@ PD_CONSENT_TEXT = (
     "Доступ к данным имеют только администраторы."
 )
 
+REG_STATUS_RU = {
+    "registered": "Зарегистрирован",
+    "waitlist": "В листе ожидания",
+    "invited_from_waitlist": "Приглашен из листа ожидания",
+    "confirmed": "Подтверждено участие",
+    "declined": "Отказ",
+    "auto_declined": "Автоотказ (таймаут)",
+    "cancelled_by_user": "Отменена пользователем",
+}
+
 
 def _parse_date(value: str) -> date:
     return datetime.strptime(value.strip(), "%Y-%m-%d").date()
@@ -251,8 +261,22 @@ async def open_event(callback: CallbackQuery) -> None:
     else:
         reg_note = "🟢 Регистрация открыта."
 
+    card_text = render_event_card(event) + "\n\n" + reg_note
+    if event.photo_file_id:
+        try:
+            await callback.message.answer_photo(
+                event.photo_file_id,
+                caption=card_text,
+                reply_markup=event_card_kb(event.id, can_register=can_register, can_cancel=can_cancel),
+            )
+            await callback.answer()
+            return
+        except TelegramBadRequest:
+            # Fallback to text card if file_id is invalid or caption is too long.
+            pass
+
     await callback.message.answer(
-        render_event_card(event) + "\n\n" + reg_note,
+        card_text,
         reply_markup=event_card_kb(event.id, can_register=can_register, can_cancel=can_cancel),
     )
     await callback.answer()
@@ -276,19 +300,34 @@ async def my_regs(update: Message | CallbackQuery) -> None:
 
         regs = await RegistrationRepository(session).list_by_user(user.id)
 
+    now = datetime.now(tz=UTC)
+    visible_statuses = {
+        RegistrationStatus.registered,
+        RegistrationStatus.waitlist,
+        RegistrationStatus.invited_from_waitlist,
+        RegistrationStatus.confirmed,
+    }
+    regs = [
+        reg
+        for reg in regs
+        if reg.status in visible_statuses and reg.event.start_at > now
+    ]
+
     if not regs:
         await send("🧾 Пока нет регистраций. Загляни в «📅 Мероприятия».")
         return
 
     event_blocks = []
-    for reg in regs:
+    for idx, reg in enumerate(regs, start=1):
+        status_ru = REG_STATUS_RU.get(reg.status.value, reg.status.value)
         block = (
-            f"#{reg.id} | {reg.event.title} | {reg.status.value}\n"
-            f"\t📍 {reg.event.location}\n"
-            f"\t🗓 {format_dt_tz(reg.event.start_at)}"
+            f"{idx}) {reg.event.title}\n"
+            f"    📍 {reg.event.location}\n"
+            f"    🗓 {format_dt_tz(reg.event.start_at)}\n\n"
+            f"    Статус: {status_ru}"
         )
         if reg.team_name:
-            block += f"\n\t👥 команда: {reg.team_name}"
+            block += f"\n    👥 Команда: {reg.team_name}"
         event_blocks.append(block)
     await send("🗂 Твои регистрации:\n\n" + "\n\n".join(event_blocks))
 

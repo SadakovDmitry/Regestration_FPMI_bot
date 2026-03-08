@@ -20,8 +20,8 @@ class EventRepository:
     async def list_published(self, now: datetime | None = None) -> list[Event]:
         stmt = select(Event).where(Event.status == EventStatus.published)
         if now:
-            # Show only events where registration is still open or will open later.
-            stmt = stmt.where(Event.registration_end_at >= now)
+            # Show all upcoming events even if registration is already closed.
+            stmt = stmt.where(Event.start_at > now)
         stmt = stmt.order_by(Event.start_at.asc())
         result = await self.session.execute(stmt)
         return list(result.scalars().all())

@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.models import Event, Registration, User
 from app.models.enums import DeliveryKind, RegistrationStatus
 from app.repositories.deliveries import DeliveryRepository
-from app.utils.text import NOT_MIPT_REG_NOTE, format_dt_tz
+from app.utils.text import NOT_MIPT_REG_NOTE, format_dt_tz, render_event_card
 
 logger = logging.getLogger(__name__)
 
@@ -35,12 +35,12 @@ class NotificationService:
             event=event,
             kind=DeliveryKind.new_event,
             text=(
-                f"🎉 Новое мероприятие: {event.title}\n"
-                f"🗓 Когда: {format_dt_tz(event.start_at)}\n"
-                "Жми «Открыть мероприятие», чтобы посмотреть детали и зарегистрироваться.\n\n"
-                f"{NOT_MIPT_REG_NOTE}"
+                "🎉 Новый анонс!\n\n"
+                f"{render_event_card(event)}\n\n"
+                "Жми «Открыть мероприятие», чтобы посмотреть детали и зарегистрироваться."
             ),
             markup=self._event_cta(event.id),
+            photo_file_id=event.photo_file_id,
         )
 
     async def notify_registration_started(self, event: Event) -> int:
@@ -49,7 +49,7 @@ class NotificationService:
             kind=DeliveryKind.registration_started,
             text=(
                 f"🚀 Регистрация на «{event.title}» уже открыта!\n"
-                f"Успей до {format_dt_tz(event.registration_end_at)}.\n\n"
+                f"Регистрация открыта до {format_dt_tz(event.registration_end_at)}.\n\n"
                 f"{NOT_MIPT_REG_NOTE}"
             ),
             markup=self._event_cta(event.id),
@@ -242,6 +242,7 @@ class NotificationService:
         kind: DeliveryKind,
         text: str,
         markup: InlineKeyboardMarkup,
+        photo_file_id: str | None = None,
     ) -> int:
         users_result = await self.session.execute(select(User).where(User.is_reachable.is_(True)))
         users = list(users_result.scalars().all())
@@ -251,7 +252,12 @@ class NotificationService:
             if await self.delivery_repo.exists(user.id, event.id, kind):
                 continue
 
-            ok = await self._safe_send(user=user, text=text, markup=markup)
+            ok = await self._safe_send(
+                user=user,
+                text=text,
+                markup=markup,
+                photo_file_id=photo_file_id,
+            )
             if ok:
                 await self._log_delivery(user_id=user.id, event_id=event.id, kind=kind)
                 sent += 1
@@ -265,8 +271,44 @@ class NotificationService:
         user: User,
         text: str,
         markup: InlineKeyboardMarkup,
+        photo_file_id: str | None = None,
         retry_on_flood: bool = True,
     ) -> bool:
+        if photo_file_id:
+            try:
+                await self.bot.send_photo(
+                    chat_id=user.tg_id,
+                    photo=photo_file_id,
+                    caption=text,
+                    reply_markup=markup,
+                )
+                return True
+            except TelegramRetryAfter as exc:
+                wait_seconds = max(float(exc.retry_after), 1.0)
+                logger.warning(
+                    "Telegram flood control for photo tg_id=%s retry_after=%s",
+                    user.tg_id,
+                    wait_seconds,
+                )
+                if retry_on_flood:
+                    await asyncio.sleep(wait_seconds)
+                    return await self._safe_send(
+                        user=user,
+                        text=text,
+                        markup=markup,
+                        photo_file_id=photo_file_id,
+                        retry_on_flood=False,
+                    )
+                return False
+            except TelegramForbiddenError:
+                user.is_reachable = False
+                logger.info("User is unreachable tg_id=%s", user.tg_id)
+                return False
+            except TelegramBadRequest:
+                logger.warning("Cannot send event photo to tg_id=%s; fallback to text", user.tg_id)
+            except Exception:
+                logger.exception("Unexpected telegram photo send error tg_id=%s", user.tg_id)
+
         try:
             await self.bot.send_message(chat_id=user.tg_id, text=text, reply_markup=markup)
             return True
