@@ -40,3 +40,21 @@ def publish_mode_kb(event_id: int) -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def edit_event_fields_kb(is_team: bool) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="Название", callback_data="edit_field:title")
+    kb.button(text="Описание", callback_data="edit_field:description")
+    kb.button(text="Дата/время события", callback_data="edit_field:start_at")
+    kb.button(text="Место", callback_data="edit_field:location")
+    kb.button(text="Начало регистрации", callback_data="edit_field:registration_start_at")
+    kb.button(text="Конец регистрации", callback_data="edit_field:registration_end_at")
+    kb.button(text="Лимит мест", callback_data="edit_field:capacity")
+    kb.button(text="Фото", callback_data="edit_field:photo_file_id")
+    if is_team:
+        kb.button(text="Мин. размер команды", callback_data="edit_field:team_min_size")
+        kb.button(text="Макс. размер команды", callback_data="edit_field:team_max_size")
+    kb.button(text="✅ Готово", callback_data="edit_done")
+    kb.adjust(2)
+    return kb.as_markup()

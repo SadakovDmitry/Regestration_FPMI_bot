@@ -10,12 +10,18 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.db import AsyncSessionLocal
-from app.handlers.states import EventCreateStates, PublishScheduleStates
-from app.keyboards.admin import events_admin_list_kb, export_kind_kb, publish_mode_kb
+from app.handlers.states import EventCreateStates, EventEditStates, PublishScheduleStates
+from app.keyboards.admin import (
+    edit_event_fields_kb,
+    events_admin_list_kb,
+    export_kind_kb,
+    publish_mode_kb,
+)
 from app.keyboards.common import (
     ADMIN_BTN_ADMINS,
     ADMIN_BTN_CREATE_EVENT,
     ADMIN_BTN_DELETE_EVENT,
+    ADMIN_BTN_EDIT_EVENT,
     ADMIN_BTN_EVENTS_LIST,
     ADMIN_BTN_EXPORT,
     ADMIN_BTN_PUBLISH,
@@ -29,6 +35,7 @@ from app.models.enums import EventStatus, RegistrationStatus
 from app.repositories.registrations import RegistrationRepository
 from app.services.admin_service import AdminService
 from app.services.event_service import EventService
+from app.services.exceptions import NotFoundError, ValidationError
 from app.services.export_service import ExportService
 from app.services.publication_service import PublicationService
 from app.services.schemas import EventCreateInput
@@ -67,6 +74,20 @@ def _registration_status_label(status: RegistrationStatus) -> str:
         RegistrationStatus.cancelled_by_user: "отменено пользователем",
     }
     return labels.get(status, status.value)
+
+
+EVENT_EDIT_FIELD_LABELS = {
+    "title": "название",
+    "description": "описание",
+    "registration_start_at": "начало регистрации",
+    "registration_end_at": "конец регистрации",
+    "start_at": "дату/время события",
+    "location": "место",
+    "capacity": "лимит мест",
+    "team_min_size": "минимальный размер команды",
+    "team_max_size": "максимальный размер команды",
+    "photo_file_id": "фото",
+}
 
 
 async def _ensure_admin(message: Message) -> bool:
@@ -331,6 +352,83 @@ async def create_event_preview_message_fallback(message: Message, state: FSMCont
     await _save_event_from_state(message, state)
 
 
+def _event_edit_prompt(event_type: str, field: str, current_value: str) -> str:
+    if field in {"registration_start_at", "registration_end_at", "start_at"}:
+        return (
+            f"Введите {EVENT_EDIT_FIELD_LABELS[field]} ({settings.timezone}).\n"
+            "Формат: YYYY-MM-DD HH:MM\n"
+            f"Сейчас: {current_value}"
+        )
+    if field in {"capacity", "team_min_size", "team_max_size"}:
+        return (
+            f"Введите {EVENT_EDIT_FIELD_LABELS[field]} (целое число > 0).\n"
+            f"Сейчас: {current_value}"
+        )
+    if field == "description":
+        return (
+            "Введите новое описание.\n"
+            "Отправьте `-`, чтобы очистить поле.\n"
+            f"Сейчас: {current_value}"
+        )
+    if field == "photo_file_id":
+        return (
+            "Отправьте новое фото сообщением или укажите `file_id`.\n"
+            "Отправьте `-`, чтобы удалить фото.\n"
+            f"Сейчас: {current_value}"
+        )
+    return f"Введите {EVENT_EDIT_FIELD_LABELS[field]}.\nСейчас: {current_value}"
+
+
+def _event_field_current_value(event: object, field: str) -> str:
+    value = getattr(event, field)
+    if value is None:
+        return "—"
+    if field in {"registration_start_at", "registration_end_at", "start_at"}:
+        return format_dt_tz(value)
+    return str(value)
+
+
+def _event_field_is_allowed_for_type(event_type: str, field: str) -> bool:
+    if event_type == "team":
+        return field in EVENT_EDIT_FIELD_LABELS
+    return field in (set(EVENT_EDIT_FIELD_LABELS) - {"team_min_size", "team_max_size"})
+
+
+async def _apply_event_edit(
+    message: Message,
+    state: FSMContext,
+    field: str,
+    parsed_value: object,
+) -> None:
+    data = await state.get_data()
+    event_id = data.get("edit_event_id")
+    if not event_id:
+        await state.clear()
+        await message.answer("Не выбрано мероприятие для редактирования. Нажмите «✏️ Изменить мероприятие».")
+        return
+
+    async with AsyncSessionLocal() as session:
+        service = EventService(session)
+        try:
+            event = await service.update_fields(int(event_id), {field: parsed_value})
+            await session.commit()
+        except NotFoundError:
+            await state.clear()
+            await message.answer("Мероприятие не найдено.")
+            return
+        except ValidationError as exc:
+            await message.answer(f"Не удалось сохранить изменение: {exc}")
+            return
+
+    await state.set_state(EventEditStates.field_pick)
+    await message.answer(
+        f"✅ Поле «{EVENT_EDIT_FIELD_LABELS[field]}» обновлено.\n"
+        f"Событие: #{event.id} • {event.title}\n"
+        f"Текущее значение: {_event_field_current_value(event, field)}",
+        reply_markup=edit_event_fields_kb(is_team=event.type.value == "team"),
+    )
+
+
 @admin_router.message(F.text == ADMIN_BTN_EVENTS_LIST)
 async def admin_events_list(message: Message) -> None:
     if not await _ensure_admin(message):
@@ -355,6 +453,154 @@ async def admin_events_list(message: Message) -> None:
         lines.append("\n".join(block))
 
     await message.answer("\n".join(lines))
+
+
+@admin_router.message(F.text == ADMIN_BTN_EDIT_EVENT)
+async def edit_event_pick(message: Message, state: FSMContext) -> None:
+    if not await _ensure_admin(message):
+        return
+
+    await state.clear()
+    async with AsyncSessionLocal() as session:
+        events = await EventService(session).list_all()
+
+    if not events:
+        await message.answer("Пока нет мероприятий для редактирования.")
+        return
+
+    await message.answer(
+        "Выберите мероприятие для редактирования:",
+        reply_markup=events_admin_list_kb(events, prefix="edit_event"),
+    )
+
+
+@admin_router.callback_query(F.data.startswith("edit_event:"))
+async def edit_event_choose_field(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _ensure_admin_cb(callback):
+        return
+
+    event_id = int(callback.data.split(":", maxsplit=1)[1])
+    async with AsyncSessionLocal() as session:
+        event = await EventService(session).get(event_id)
+    if not event:
+        await callback.message.answer("Мероприятие не найдено.")
+        await callback.answer()
+        return
+
+    await state.clear()
+    await state.update_data(edit_event_id=event.id)
+    await state.set_state(EventEditStates.field_pick)
+    await callback.message.answer(
+        f"✏️ Редактирование события #{event.id} • {event.title}\n"
+        "Выберите поле, которое хотите изменить:",
+        reply_markup=edit_event_fields_kb(is_team=event.type.value == "team"),
+    )
+    await callback.answer()
+
+
+@admin_router.callback_query(EventEditStates.field_pick, F.data == "edit_done")
+async def edit_event_done(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _ensure_admin_cb(callback):
+        return
+    await state.clear()
+    await callback.message.answer("Редактирование завершено.")
+    await callback.answer()
+
+
+@admin_router.callback_query(EventEditStates.field_pick, F.data.startswith("edit_field:"))
+async def edit_event_field_pick(callback: CallbackQuery, state: FSMContext) -> None:
+    if not await _ensure_admin_cb(callback):
+        return
+
+    field = callback.data.split(":", maxsplit=1)[1]
+    if field not in EVENT_EDIT_FIELD_LABELS:
+        await callback.answer("Неизвестное поле", show_alert=True)
+        return
+
+    data = await state.get_data()
+    event_id = data.get("edit_event_id")
+    if not event_id:
+        await state.clear()
+        await callback.message.answer("Не выбрано мероприятие. Нажмите «✏️ Изменить мероприятие».")
+        await callback.answer()
+        return
+
+    async with AsyncSessionLocal() as session:
+        event = await EventService(session).get(int(event_id))
+    if not event:
+        await state.clear()
+        await callback.message.answer("Мероприятие не найдено.")
+        await callback.answer()
+        return
+
+    if not _event_field_is_allowed_for_type(event.type.value, field):
+        await callback.answer("Это поле недоступно для текущего типа события", show_alert=True)
+        return
+
+    await state.update_data(edit_field=field)
+    await state.set_state(EventEditStates.value)
+    await callback.message.answer(
+        _event_edit_prompt(
+            event_type=event.type.value,
+            field=field,
+            current_value=_event_field_current_value(event, field),
+        )
+    )
+    await callback.answer()
+
+
+@admin_router.message(EventEditStates.value, F.photo)
+async def edit_event_value_photo(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    field = data.get("edit_field")
+    if field != "photo_file_id":
+        await message.answer("Для этого поля нужно отправить текстовое значение.")
+        return
+
+    await _apply_event_edit(
+        message=message,
+        state=state,
+        field=field,
+        parsed_value=message.photo[-1].file_id,
+    )
+
+
+@admin_router.message(EventEditStates.value)
+async def edit_event_value_text(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    field = data.get("edit_field")
+    if field not in EVENT_EDIT_FIELD_LABELS:
+        await state.clear()
+        await message.answer("Сценарий редактирования сброшен. Нажмите «✏️ Изменить мероприятие».")
+        return
+    if not message.text:
+        await message.answer("Отправьте текстовое значение.")
+        return
+
+    value = message.text.strip()
+    if field in {"registration_start_at", "registration_end_at", "start_at"}:
+        try:
+            parsed_value = parse_dt(value, settings.timezone)
+        except ValueError:
+            await message.answer("Неверный формат даты/времени. Используйте YYYY-MM-DD HH:MM")
+            return
+    elif field in {"capacity", "team_min_size", "team_max_size"}:
+        try:
+            parsed_value = int(value)
+        except ValueError:
+            await message.answer("Введите целое число.")
+            return
+    elif field in {"description", "photo_file_id"}:
+        parsed_value = None if value == "-" else value
+    else:
+        parsed_value = value
+
+    await _apply_event_edit(
+        message=message,
+        state=state,
+        field=field,
+        parsed_value=parsed_value,
+    )
 
 
 @admin_router.message(F.text == ADMIN_BTN_DELETE_EVENT)

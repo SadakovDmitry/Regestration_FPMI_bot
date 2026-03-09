@@ -6,6 +6,7 @@ ADMIN_BTN_PUBLISH = "🚀 Запустить мероприятие"
 ADMIN_BTN_REGISTRATIONS = "🧾 Заявки на мероприятие"
 ADMIN_BTN_WAITLIST = "⏳ Лист ожидания"
 ADMIN_BTN_EXPORT = "📤 Выгрузка CSV/XLSX"
+ADMIN_BTN_EDIT_EVENT = "✏️ Изменить мероприятие"
 ADMIN_BTN_DELETE_EVENT = "🗑️ Удалить мероприятие"
 ADMIN_BTN_SETTINGS = "⚙️ Настройки бота"
 ADMIN_BTN_ADMINS = "👮 Управление админами"
@@ -28,7 +29,8 @@ def admin_menu_kb() -> ReplyKeyboardMarkup:
             [KeyboardButton(text=ADMIN_BTN_CREATE_EVENT), KeyboardButton(text=ADMIN_BTN_EVENTS_LIST)],
             [KeyboardButton(text=ADMIN_BTN_PUBLISH), KeyboardButton(text=ADMIN_BTN_REGISTRATIONS)],
             [KeyboardButton(text=ADMIN_BTN_WAITLIST), KeyboardButton(text=ADMIN_BTN_EXPORT)],
-            [KeyboardButton(text=ADMIN_BTN_DELETE_EVENT), KeyboardButton(text=ADMIN_BTN_SETTINGS)],
+            [KeyboardButton(text=ADMIN_BTN_EDIT_EVENT), KeyboardButton(text=ADMIN_BTN_DELETE_EVENT)],
+            [KeyboardButton(text=ADMIN_BTN_SETTINGS)],
             [KeyboardButton(text=ADMIN_BTN_ADMINS)],
         ],
         resize_keyboard=True,

@@ -72,6 +72,39 @@ class EventService:
         if not result.rowcount:
             raise NotFoundError("Event not found")
 
+    async def update_fields(self, event_id: int, updates: dict[str, object]) -> Event:
+        if not updates:
+            raise ValidationError("No updates provided")
+
+        allowed_fields = {
+            "title",
+            "description",
+            "registration_start_at",
+            "registration_end_at",
+            "start_at",
+            "location",
+            "capacity",
+            "team_min_size",
+            "team_max_size",
+            "photo_file_id",
+        }
+        unknown = set(updates) - allowed_fields
+        if unknown:
+            raise ValidationError(f"Unknown fields: {', '.join(sorted(unknown))}")
+
+        result = await self.session.execute(
+            select(Event).where(Event.id == event_id).with_for_update()
+        )
+        event = result.scalar_one_or_none()
+        if not event:
+            raise NotFoundError("Event not found")
+
+        for field_name, value in updates.items():
+            setattr(event, field_name, value)
+
+        self._validate_existing(event)
+        return event
+
     async def schedule_publish(self, event_id: int, publish_at: datetime) -> Event:
         result = await self.session.execute(
             select(Event).where(Event.id == event_id).with_for_update()

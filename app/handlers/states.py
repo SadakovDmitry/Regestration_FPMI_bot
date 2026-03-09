@@ -32,6 +32,11 @@ class PublishScheduleStates(StatesGroup):
     publish_at = State()
 
 
+class EventEditStates(StatesGroup):
+    field_pick = State()
+    value = State()
+
+
 class RegistrationStates(StatesGroup):
     last_name = State()
     first_name = State()
